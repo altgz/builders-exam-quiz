@@ -69,6 +69,17 @@
 
         <div id="load-error" class="notice hidden"></div>
 
+        <section class="card exam-draft-card hidden" id="exam-draft-card">
+          <div class="exam-draft-body">
+            <span class="exam-draft-label">未完成的模拟考试</span>
+            <strong id="exam-draft-meta">--</strong>
+          </div>
+          <div class="exam-draft-actions">
+            <button class="btn primary" type="button" id="btn-resume-exam">继续考试</button>
+            <button class="btn ghost" type="button" id="btn-drop-draft">放弃</button>
+          </div>
+        </section>
+
         <section class="card filter-card">
           <div class="card-head">
             <h2>选择范围</h2>
@@ -159,6 +170,7 @@
           <span class="pill accent" id="quiz-mode">顺序练习</span>
           <span class="quiz-count" id="quiz-count">1 / 10</span>
           <span class="timer hidden" id="quiz-timer">15:00</span>
+          <button class="mini-btn ghost hidden" id="btn-abandon-exam" type="button">放弃</button>
           <button class="mini-btn hidden" id="btn-handin" type="button">交卷</button>
         </div>
 
@@ -175,6 +187,7 @@
 
       <section class="view hidden" id="view-stats">
         <h1 class="page-title">学习统计</h1>
+        <p class="stats-scope" id="stats-scope">统计范围：全部题目（首页数字随科目/章节筛选变化）</p>
         <div class="stat-grid">
           <div class="card stat-card">
             <span>总正确率</span>

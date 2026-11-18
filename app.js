@@ -9,6 +9,7 @@
   const STORAGE_KEY = 'bq:v1';
   const UNLOCK_KEY = 'bq:unlock:v1';
   const SYNC_KEY = 'bq:sync:v1';
+  const EXAM_DRAFT_KEY = 'bq:exam-draft:v1';
   const MAX_EXAMS = 20;
 
   // ===== 访问密码：修改下面这一行即可更换站点密码（区分大小写）=====
@@ -54,6 +55,8 @@
     timerId: null,
     toastId: null,
     unlocked: false,
+    // 浏览器历史深度：0 为首页，页面级切换递增，系统返回按 popstate 回退
+    nav: { depth: 0 },
     // 云同步运行时状态：session 为 Supabase 登录会话，applying 防止同步回写触发再次同步
     sync: {
       session: null,
@@ -124,10 +127,15 @@
     dom.examTimeHint = $('#exam-time-hint');
     dom.btnStartExam = $('#btn-start-exam');
     dom.recentExams = $('#recent-exams');
+    dom.examDraftCard = $('#exam-draft-card');
+    dom.examDraftMeta = $('#exam-draft-meta');
+    dom.btnResumeExam = $('#btn-resume-exam');
+    dom.btnDropDraft = $('#btn-drop-draft');
 
     dom.quizMode = $('#quiz-mode');
     dom.quizCount = $('#quiz-count');
     dom.quizTimer = $('#quiz-timer');
+    dom.btnAbandonExam = $('#btn-abandon-exam');
     dom.btnHandin = $('#btn-handin');
     dom.qType = $('#q-type');
     dom.qChapter = $('#q-chapter');
@@ -141,6 +149,7 @@
     dom.btnMain = $('#btn-main');
 
     dom.statAccuracy = $('#stat-accuracy');
+    dom.statsScope = $('#stats-scope');
     dom.statAttempts = $('#stat-attempts');
     dom.statDone = $('#stat-done');
     dom.statTotal = $('#stat-total');
@@ -196,12 +205,16 @@
     dom.btnStartExam.addEventListener('click', function () {
       startExam();
     });
+    dom.btnResumeExam.addEventListener('click', function () {
+      resumeExamDraft();
+    });
+    dom.btnDropDraft.addEventListener('click', dropExamDraft);
 
     $('#btn-stats').addEventListener('click', function () {
-      showView('stats');
+      navTo('stats');
     });
     $('#btn-stats-2').addEventListener('click', function () {
-      showView('stats');
+      navTo('stats');
     });
 
     dom.btnBack.addEventListener('click', handleBack);
@@ -211,17 +224,17 @@
     dom.btnHandin.addEventListener('click', function () {
       submitExam(false);
     });
+    dom.btnAbandonExam.addEventListener('click', abandonExam);
 
     // 选项使用事件委托，避免每次重绘重复绑定
     dom.qOptions.addEventListener('click', handleOptionClick);
 
     dom.btnResultHome.addEventListener('click', function () {
-      app.session = null;
-      showView('home');
+      goBackToHome();
     });
     dom.btnRetryExam.addEventListener('click', function () {
       const size = app.lastResult ? app.lastResult.size : undefined;
-      startExam(size);
+      startExam(size, true);
     });
 
     dom.btnReset.addEventListener('click', resetAllData);
@@ -229,6 +242,15 @@
     window.addEventListener('scroll', function () {
       dom.topbar.classList.toggle('scrolled', window.scrollY > 4);
     }, { passive: true });
+
+    // 离开页面/切到后台时落盘考试草稿，endAt 为绝对时间，回来按真实时间续算
+    window.addEventListener('beforeunload', saveExamDraft);
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState === 'hidden') saveExamDraft();
+    });
+
+    // 系统返回/侧滑：按页面级历史回退，不参与答题页内部的上一题
+    window.addEventListener('popstate', handlePopState);
 
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const onSchemeChange = function () {
@@ -282,10 +304,14 @@
     dom.gate.classList.add('hidden');
     dom.topbar.classList.remove('hidden');
     dom.main.classList.remove('hidden');
+    // 解锁进入或重新解锁时，把当前历史位置归位到首页
+    app.nav.depth = 0;
+    history.replaceState({ view: 'home', modal: null, depth: 0 }, '');
     showView('home');
 
     // 首次进入才请求题库；锁定后再次解锁直接复用已加载的数据
     if (!app.questions.length) loadQuestions();
+    else maybeResumeExamDraft();
 
     // 已登录时进入站点后与云端同步一次（未配置或未登录时不做任何请求）
     if (SYNC_ENABLED && app.sync.session) syncNow('enter');
@@ -309,7 +335,8 @@
 
   function lockApp() {
     if (app.session && app.session.mode === 'exam' && !app.session.exam.submitted) {
-      if (!window.confirm('锁定后本次考试进度将丢失，确定锁定吗？')) return;
+      if (!window.confirm('锁定后本次考试进度会保留，重新解锁后可继续；考试计时不会暂停。确定锁定吗？')) return;
+      saveExamDraft();
     }
 
     stopTimer();
@@ -321,7 +348,7 @@
     dom.btnHandin.classList.add('hidden');
     dom.quizTimer.classList.add('hidden');
     dom.toast.classList.remove('show');
-    closeSyncModal();
+    closeSyncModalFromHistory();
     showGate();
   }
 
@@ -404,6 +431,9 @@
 
       buildFilterOptions();
       renderHome();
+
+      // 题库就绪后才能校验草稿中的题号，恢复未完成的模拟考试
+      maybeResumeExamDraft();
 
       const missing = app.questions.filter(function (q) { return q.answer.length === 0; }).length;
       dom.heroDesc.textContent = '已收录 ' + app.questions.length + ' 道题' +
@@ -512,6 +542,7 @@
 
     buildExamSizes(playable.length);
     renderRecentExams();
+    renderExamDraftCard();
   }
 
   function renderRecentExams() {
@@ -608,15 +639,21 @@
     };
 
     dom.qOptions.innerHTML = '';
-    showView('quiz');
+    navTo('quiz');
     renderQuiz();
   }
 
-  function startExam(sizeArg) {
+  function startExam(sizeArg, replaceCurrent) {
     const pool = getPlayableFiltered();
     if (!pool.length) {
       toast('当前范围没有可抽取的题目');
       return;
+    }
+
+    // 已有草稿时，开始新考试视为放弃旧草稿
+    if (readExamDraft()) {
+      if (!window.confirm('已有未完成的模拟考试。开始新考试将放弃原草稿，确定吗？')) return;
+      clearExamDraft();
     }
 
     let size = sizeArg || parseInt(dom.examSize.value, 10) || pool.length;
@@ -642,9 +679,11 @@
     };
 
     dom.qOptions.innerHTML = '';
-    showView('quiz');
+    if (replaceCurrent) replaceView('quiz');
+    else navTo('quiz');
     startTimer();
     renderQuiz();
+    saveExamDraft();
   }
 
   function ensureEntry(id) {
@@ -729,12 +768,14 @@
 
     if (isExam) {
       dom.btnHandin.classList.remove('hidden');
+      dom.btnAbandonExam.classList.remove('hidden');
       dom.quizTimer.classList.remove('hidden');
       dom.btnMain.textContent = s.index === s.ids.length - 1 ? '交卷' : '下一题';
       dom.btnMain.disabled = false;
       updateTimerUI();
     } else {
       dom.btnHandin.classList.add('hidden');
+      dom.btnAbandonExam.classList.add('hidden');
       dom.quizTimer.classList.add('hidden');
 
       // 多选题必须选择后手动提交，单选与判断题点击选项立即判定
@@ -775,6 +816,7 @@
     entry.selected = [letter];
     if (s.mode === 'exam') {
       renderQuiz();
+      saveExamDraft();
     } else {
       submitCurrent();
     }
@@ -816,6 +858,7 @@
     if (!s || s.index === 0) return;
     s.index -= 1;
     renderQuiz();
+    saveExamDraft();
     window.scrollTo(0, 0);
   }
 
@@ -830,6 +873,7 @@
       } else {
         s.index += 1;
         renderQuiz();
+        saveExamDraft();
         window.scrollTo(0, 0);
       }
       return;
@@ -844,7 +888,7 @@
     }
 
     if (s.index === s.ids.length - 1) {
-      showView('home');
+      goBackToHome();
       toast('本组练习完成');
       return;
     }
@@ -908,6 +952,162 @@
 
   /* ---------------------------- 模拟考试 ---------------------------- */
 
+  /**
+   * 考试草稿只存本机，不进入云端同步：
+   * { ids, index, entries(仅 selected), startedAt, duration, endAt, size }
+   * endAt 为绝对时间，刷新/关闭页面后按真实时间续算剩余时长。
+   */
+  function saveExamDraft() {
+    const s = app.session;
+    if (!s || s.mode !== 'exam' || !s.exam || s.exam.submitted) return;
+
+    const entries = {};
+    s.ids.forEach(function (id) {
+      const entry = s.entries[id];
+      entries[id] = { selected: entry && entry.selected ? entry.selected.slice() : [] };
+    });
+
+    try {
+      localStorage.setItem(EXAM_DRAFT_KEY, JSON.stringify({
+        ids: s.ids.slice(),
+        index: s.index,
+        entries: entries,
+        startedAt: s.startedAt,
+        duration: s.exam.duration,
+        endAt: s.exam.endAt,
+        size: s.exam.size
+      }));
+    } catch (err) {
+      console.warn('考试草稿保存失败', err);
+    }
+  }
+
+  function readExamDraft() {
+    try {
+      const raw = localStorage.getItem(EXAM_DRAFT_KEY);
+      if (!raw) return null;
+      const draft = JSON.parse(raw);
+      if (!draft || !Array.isArray(draft.ids) || !draft.ids.length) return null;
+      if (!draft.duration || !draft.endAt) return null;
+
+      // 题库若发生变化，移除已不存在的题号
+      draft.ids = draft.ids.filter(function (id) { return !!app.byId[id]; });
+      return draft.ids.length ? draft : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function clearExamDraft() {
+    try {
+      localStorage.removeItem(EXAM_DRAFT_KEY);
+    } catch (err) {
+      // 隐私模式下可能无法写入，忽略即可
+    }
+    renderExamDraftCard();
+  }
+
+  function buildExamSession(draft) {
+    const entries = {};
+    draft.ids.forEach(function (id) {
+      const q = app.byId[id];
+      const saved = draft.entries && draft.entries[id];
+      const selected = (saved && Array.isArray(saved.selected) ? saved.selected : [])
+        .filter(function (letter) {
+          return /^[A-F]$/.test(letter) && letter.charCodeAt(0) - 65 < q.options.length;
+        });
+      entries[id] = { selected: selected, submitted: false, correct: null };
+    });
+
+    const index = Math.min(
+      Math.max(parseInt(draft.index, 10) || 0, 0),
+      draft.ids.length - 1
+    );
+
+    return {
+      mode: 'exam',
+      ids: draft.ids.slice(),
+      index: index,
+      entries: entries,
+      startedAt: draft.startedAt || Date.now(),
+      exam: {
+        size: Math.min(draft.size || draft.ids.length, draft.ids.length),
+        duration: draft.duration,
+        endAt: draft.endAt,
+        remaining: Math.max(0, Math.ceil((draft.endAt - Date.now()) / 1000)),
+        submitted: false
+      }
+    };
+  }
+
+  function resumeExamDraft(fromHistory) {
+    const draft = readExamDraft();
+    if (!draft) {
+      clearExamDraft();
+      return false;
+    }
+
+    app.session = buildExamSession(draft);
+
+    // 离开期间已超过结束时间：按草稿中已答内容自动交卷
+    if (app.session.exam.endAt <= Date.now()) {
+      submitExam(true);
+      toast('考试时间已结束，已自动交卷');
+      return true;
+    }
+
+    dom.qOptions.innerHTML = '';
+    if (fromHistory) showView('quiz');
+    else navTo('quiz');
+    startTimer();
+    renderQuiz();
+    toast('已恢复未完成的模拟考试');
+    return true;
+  }
+
+  function maybeResumeExamDraft() {
+    if (app.session) return;
+    if (document.body.dataset.view !== 'home') return;
+    if (!readExamDraft()) return;
+    resumeExamDraft();
+  }
+
+  function dropExamDraft() {
+    if (!window.confirm('放弃未完成的模拟考试？已答内容将清空，无法恢复。')) return;
+    clearExamDraft();
+    toast('已放弃未完成的考试');
+  }
+
+  function abandonExam() {
+    if (!app.session || app.session.mode !== 'exam' || app.session.exam.submitted) return;
+    if (!window.confirm('放弃本次模拟考试？当前已答内容将清空，且不会计入成绩。')) return;
+
+    stopTimer();
+    clearExamDraft();
+    app.session = null;
+    goBackToHome();
+    toast('已放弃本次考试');
+  }
+
+  function renderExamDraftCard() {
+    if (!dom.examDraftCard) return;
+    const draft = readExamDraft();
+    if (!draft) {
+      dom.examDraftCard.classList.add('hidden');
+      return;
+    }
+
+    const remaining = Math.max(0, Math.ceil((draft.endAt - Date.now()) / 1000));
+    const answered = draft.ids.filter(function (id) {
+      const entry = draft.entries && draft.entries[id];
+      return entry && Array.isArray(entry.selected) && entry.selected.length > 0;
+    }).length;
+
+    dom.examDraftMeta.textContent = '剩余 ' + formatClock(remaining) +
+      ' · 已答 ' + answered + '/' + draft.ids.length;
+    dom.examDraftCard.classList.remove('hidden');
+  }
+
   function startTimer() {
     stopTimer();
     app.timerId = setInterval(tickTimer, 1000);
@@ -966,6 +1166,7 @@
 
     stopTimer();
     s.exam.submitted = true;
+    clearExamDraft();
 
     let correctCount = 0;
     let wrongCount = 0;
@@ -1022,6 +1223,8 @@
 
     renderResult();
     showView('result');
+    // 结果页替换答题页这条历史，系统返回时直接回首页，而不是回到已交卷的答题页
+    history.replaceState({ view: 'result', modal: null, depth: app.nav.depth }, '');
   }
 
   function renderResult() {
@@ -1067,6 +1270,7 @@
 
   function renderStats() {
     const agg = aggregateRecords(app.questions);
+    dom.statsScope.textContent = '统计范围：全部 ' + app.questions.length + ' 题（首页数字随科目/章节筛选变化）';
     dom.statAccuracy.textContent = agg.accuracy === null ? '--' : Math.round(agg.accuracy * 100) + '%';
     dom.statAttempts.textContent = '共 ' + agg.attempts + ' 次作答';
     dom.statDone.textContent = agg.done;
@@ -1140,7 +1344,10 @@
   }
 
   function resetAllData() {
-    if (!window.confirm('确定清除全部做题记录、错题、收藏和考试历史吗？此操作不可恢复。')) return;
+    if (!window.confirm('确定清除全部做题记录、错题、收藏、考试历史和未完成的考试草稿吗？此操作不可恢复。')) return;
+    stopTimer();
+    app.session = null;
+    clearExamDraft();
     app.store = defaultStore();
     saveStore(true);
     // 已登录时同步清除云端记录，避免下次登录又把旧数据合并回来
@@ -1179,16 +1386,96 @@
     window.scrollTo(0, 0);
   }
 
+  // 页面级前进：写入一条历史，系统返回时回到上一屏
+  function navTo(name) {
+    app.nav.depth += 1;
+    history.pushState({ view: name, modal: null, depth: app.nav.depth }, '');
+    showView(name);
+  }
+
+  // 原地替换当前历史（交卷结果页、重新考试），避免返回时回到已结束的答题页
+  function replaceView(name) {
+    history.replaceState({ view: name, modal: null, depth: app.nav.depth }, '');
+    showView(name);
+  }
+
+  function leaveQuizState() {
+    if (app.session && app.session.mode === 'exam' && !app.session.exam.submitted) {
+      saveExamDraft();
+      toast('考试进度已保存，可在首页继续');
+    }
+    stopTimer();
+    app.session = null;
+  }
+
+  function goBackToHome() {
+    const state = history.state;
+    if (state && state.depth > 0) {
+      history.back();
+      return;
+    }
+
+    leaveQuizState();
+    app.nav.depth = 0;
+    history.replaceState({ view: 'home', modal: null, depth: 0 }, '');
+    showView('home');
+  }
+
+  // popstate 只负责“恢复目标页”，不再写历史，避免返回键来回叠加
+  function handlePopState(e) {
+    const state = e.state || { view: 'home', modal: null, depth: 0 };
+    app.nav.depth = state.depth || 0;
+
+    if (state.modal === 'sync') openSyncModalFromHistory();
+    else closeSyncModalFromHistory();
+
+    if (state.view && state.view !== document.body.dataset.view) {
+      applyViewFromHistory(state.view);
+    }
+  }
+
+  function applyViewFromHistory(name) {
+    if (name === 'quiz') {
+      // 前进回到答题页：练习会话已释放时，优先恢复考试草稿
+      if (!app.session) {
+        if (readExamDraft()) {
+          resumeExamDraft(true);
+          return;
+        }
+        app.nav.depth = 0;
+        history.replaceState({ view: 'home', modal: null, depth: 0 }, '');
+        showView('home');
+        toast('练习状态已失效，请重新开始');
+        return;
+      }
+
+      showView('quiz');
+      if (app.session.mode === 'exam') startTimer();
+      renderQuiz();
+      return;
+    }
+
+    if (name === 'result' && !app.lastResult) {
+      app.nav.depth = 0;
+      history.replaceState({ view: 'home', modal: null, depth: 0 }, '');
+      showView('home');
+      return;
+    }
+
+    if (document.body.dataset.view === 'quiz') leaveQuizState();
+    if (name === 'home' && app.session) app.session = null;
+    showView(name);
+  }
+
   function handleBack() {
     const view = document.body.dataset.view;
 
     if (view === 'quiz' && app.session && app.session.mode === 'exam' && !app.session.exam.submitted) {
-      if (!window.confirm('退出后本次考试成绩不会保存，确定退出吗？')) return;
+      if (!window.confirm('退出后本次考试进度会保留，可在首页继续；考试计时不会暂停。确定退出吗？')) return;
+      saveExamDraft();
     }
 
-    stopTimer();
-    app.session = null;
-    showView('home');
+    goBackToHome();
   }
 
   function applyTheme() {
@@ -1257,6 +1544,21 @@
 
   function openSyncModal() {
     if (!SYNC_ENABLED) return;
+    const state = history.state;
+    if (!(state && state.modal === 'sync')) {
+      app.nav.depth += 1;
+      history.pushState({
+        view: document.body.dataset.view,
+        modal: 'sync',
+        depth: app.nav.depth
+      }, '');
+    }
+    openSyncModalFromHistory();
+  }
+
+  // 供 popstate 使用：只显示，不再写历史
+  function openSyncModalFromHistory() {
+    if (!SYNC_ENABLED) return;
     dom.syncModal.classList.remove('hidden');
     document.body.classList.add('modal-open');
     if (!app.sync.session) {
@@ -1267,6 +1569,15 @@
   }
 
   function closeSyncModal() {
+    const state = history.state;
+    if (state && state.modal === 'sync') {
+      history.back();
+      return;
+    }
+    closeSyncModalFromHistory();
+  }
+
+  function closeSyncModalFromHistory() {
     dom.syncModal.classList.add('hidden');
     document.body.classList.remove('modal-open');
   }
@@ -1358,7 +1669,10 @@
       updateSyncUI();
       await syncNow('login');
     } catch (err) {
-      setSyncStatus('登录失败：' + err.message);
+      const message = /Failed to fetch|NetworkError|Load failed/i.test(err.message)
+        ? '网络不可用，请稍后重试'
+        : err.message;
+      setSyncStatus('登录失败：' + message);
     }
   }
 
@@ -1587,7 +1901,10 @@
       await pushCloudState(session, merged);
       setSyncStatus('已同步 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
     } catch (err) {
-      setSyncStatus('同步失败：' + err.message);
+      const message = /Failed to fetch|NetworkError|Load failed/i.test(err.message)
+        ? '网络不可用，请稍后重试'
+        : err.message;
+      setSyncStatus('同步失败：' + message);
     } finally {
       app.sync.syncing = false;
     }

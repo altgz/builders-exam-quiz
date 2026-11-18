@@ -227,6 +227,17 @@ p {
   white-space: nowrap;
 }
 
+/* 窄屏且出现返回按钮时，隐藏品牌文字，避免顶栏拥挤后只显示「刷…」 */
+@media (max-width: 480px) {
+  .topbar-inner:has(#btn-back:not(.hidden)) .brand-text {
+    display: none;
+  }
+
+  .topbar-inner:has(#btn-back:not(.hidden)) .brand {
+    flex: 0 0 auto;
+  }
+}
+
 .icon-btn {
   width: 34px;
   height: 34px;
@@ -964,6 +975,21 @@ body[data-view="stats"] .exam-mini:last-child {
   margin-left: 0;
 }
 
+.quiz-head .mini-btn {
+  margin-left: 0;
+}
+
+.mini-btn.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.mini-btn.ghost:active {
+  color: var(--danger);
+  border-color: var(--danger-line);
+}
+
 .question-card {
   padding: 20px 18px;
 }
@@ -1193,6 +1219,52 @@ body[data-view="stats"] .exam-mini:last-child {
   margin: 4px 2px 16px;
   font-size: 22px;
   font-weight: 700;
+}
+
+/* 统计页固定说明：统计口径为全量题库，不跟随首页筛选 */
+.stats-scope {
+  margin: -8px 2px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+/* 首页未完成考试草稿入口 */
+.exam-draft-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+  border-color: var(--accent-line);
+  background: var(--accent-weak);
+}
+
+.exam-draft-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.exam-draft-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.exam-draft-body strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.exam-draft-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.exam-draft-actions .btn {
+  height: 38px;
+  font-size: 13px;
 }
 
 .stat-grid {
