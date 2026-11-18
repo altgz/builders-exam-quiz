@@ -81,6 +81,35 @@
           </div>
         </section>
 
+        <section class="card sync-card hidden" id="sync-card">
+          <div class="card-head">
+            <h2>跨设备同步</h2>
+            <span class="muted" id="sync-status">未登录</span>
+          </div>
+          <form class="sync-form" id="auth-form" autocomplete="on">
+            <label class="field">
+              <span>邮箱</span>
+              <input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" required>
+            </label>
+            <label class="field">
+              <span>密码</span>
+              <input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 6 位" minlength="6" required>
+            </label>
+            <div class="sync-actions">
+              <button class="btn primary" type="submit" id="btn-login">登录</button>
+              <button class="btn ghost" type="button" id="btn-signup">注册</button>
+            </div>
+          </form>
+          <div class="sync-user hidden" id="sync-user">
+            <p class="sync-email">已登录：<strong id="sync-email"></strong></p>
+            <div class="sync-actions">
+              <button class="btn" type="button" id="btn-sync-now">立即同步</button>
+              <button class="btn ghost" type="button" id="btn-logout">退出登录</button>
+            </div>
+          </div>
+          <p class="sync-hint" id="sync-hint">离线优先：做题先存本机，登录后自动与云端合并。</p>
+        </section>
+
         <div class="section-head">
           <h2>练习模式</h2>
           <span class="muted">即时判题</span>

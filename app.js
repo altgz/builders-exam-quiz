@@ -8,11 +8,20 @@
 
   const STORAGE_KEY = 'bq:v1';
   const UNLOCK_KEY = 'bq:unlock:v1';
+  const SYNC_KEY = 'bq:sync:v1';
   const MAX_EXAMS = 20;
 
   // ===== 访问密码：修改下面这一行即可更换站点密码（区分大小写）=====
   // 修改后，已解锁的设备会因校验值变化而需要重新输入。
   const ACCESS_PASSWORD = 'Yuanzhi2026';
+
+  // ===== 可选云同步（Supabase）=====
+  // 两项都填写后才启用同步；留空时站点完全保持纯本地 localStorage 模式。
+  // Project URL 例：https://abcdefgh.supabase.co
+  // anon key 在 Supabase 控制台 Project Settings → API 中获取（可公开的 anon public key）。
+  const SUPABASE_URL = 'https://zjlwvalqqifmwayvkieu.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_h9S-a3UfvaL4jl8qM618xA_TOybeW7a';
+  const SYNC_ENABLED = Boolean(SUPABASE_URL.trim() && SUPABASE_ANON_KEY.trim());
 
   const MODE_LABEL = {
     sequence: '顺序练习',
@@ -44,7 +53,14 @@
     lastResult: null,
     timerId: null,
     toastId: null,
-    unlocked: false
+    unlocked: false,
+    // 云同步运行时状态：session 为 Supabase 登录会话，applying 防止同步回写触发再次同步
+    sync: {
+      session: null,
+      timer: null,
+      syncing: false,
+      applying: false
+    }
   };
 
   const dom = {};
@@ -56,6 +72,7 @@
     app.store = loadStore();
     applyTheme();
     bindEvents();
+    initSync();
 
     // 未解锁时停留在密码页，不请求题库，也不渲染首页数据
     if (checkUnlock()) enterApp();
@@ -75,6 +92,19 @@
     dom.topbarTitle = $('#topbar-title');
     dom.topProgress = $('#top-progress');
     dom.topProgressFill = $('#top-progress-fill');
+
+    dom.syncCard = $('#sync-card');
+    dom.syncStatus = $('#sync-status');
+    dom.authForm = $('#auth-form');
+    dom.authEmail = $('#auth-email');
+    dom.authPassword = $('#auth-password');
+    dom.btnLogin = $('#btn-login');
+    dom.btnSignup = $('#btn-signup');
+    dom.syncUser = $('#sync-user');
+    dom.syncEmail = $('#sync-email');
+    dom.btnSyncNow = $('#btn-sync-now');
+    dom.btnLogout = $('#btn-logout');
+    dom.syncHint = $('#sync-hint');
 
     dom.heroDesc = $('#hero-desc');
     dom.homeTotal = $('#home-total');
@@ -205,6 +235,19 @@
     };
     if (media.addEventListener) media.addEventListener('change', onSchemeChange);
     else if (media.addListener) media.addListener(onSchemeChange);
+
+    // 云同步入口：未配置 Supabase 时这些节点不显示，绑定也不会影响本地功能
+    if (SYNC_ENABLED) {
+      dom.authForm.addEventListener('submit', function (e) {
+        e.preventDefault();
+        signIn();
+      });
+      dom.btnSignup.addEventListener('click', signUp);
+      dom.btnLogout.addEventListener('click', signOut);
+      dom.btnSyncNow.addEventListener('click', function () {
+        syncNow('manual');
+      });
+    }
   }
 
   /* ---------------------------- 访问密码 ---------------------------- */
@@ -237,6 +280,9 @@
 
     // 首次进入才请求题库；锁定后再次解锁直接复用已加载的数据
     if (!app.questions.length) loadQuestions();
+
+    // 已登录时进入站点后与云端同步一次（未配置或未登录时不做任何请求）
+    if (SYNC_ENABLED && app.sync.session) syncNow('enter');
   }
 
   function showGate() {
@@ -1089,7 +1135,9 @@
   function resetAllData() {
     if (!window.confirm('确定清除全部做题记录、错题、收藏和考试历史吗？此操作不可恢复。')) return;
     app.store = defaultStore();
-    saveStore();
+    saveStore(true);
+    // 已登录时同步清除云端记录，避免下次登录又把旧数据合并回来
+    deleteCloudState();
     app.filter = { subject: 'all', chapter: 'all' };
     applyTheme();
     buildFilterOptions();
@@ -1166,9 +1214,390 @@
     const current = app.store.settings.theme || 'auto';
     const next = order[(order.indexOf(current) + 1) % order.length];
     app.store.settings.theme = next;
-    saveStore();
+    saveStore(true);
     applyTheme();
     toast('主题：' + (next === 'auto' ? '跟随系统' : next === 'light' ? '浅色' : '深色'));
+  }
+
+  /* ---------------------------- 云同步（可选） ---------------------------- */
+
+  // 配置为空时整块逻辑不启用：不显示入口、不发请求，本地模式完全不受影响
+  function initSync() {
+    if (!SYNC_ENABLED) return;
+
+    dom.syncCard.classList.remove('hidden');
+    try {
+      const raw = localStorage.getItem(SYNC_KEY);
+      if (raw) app.sync.session = JSON.parse(raw);
+    } catch (err) {
+      app.sync.session = null;
+    }
+    updateSyncUI();
+  }
+
+  function updateSyncUI() {
+    if (!SYNC_ENABLED) return;
+    const session = app.sync.session;
+    dom.authForm.classList.toggle('hidden', Boolean(session));
+    dom.syncUser.classList.toggle('hidden', !session);
+    if (session) {
+      dom.syncEmail.textContent = session.email || session.userId || '已登录';
+      setSyncStatus('已登录');
+    } else {
+      setSyncStatus('未登录');
+    }
+  }
+
+  function setSyncStatus(text) {
+    if (dom.syncStatus) dom.syncStatus.textContent = text;
+  }
+
+  function apiUrl(path) {
+    return SUPABASE_URL.replace(/\/+$/, '') + path;
+  }
+
+  function authHeaders() {
+    return {
+      apikey: SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json'
+    };
+  }
+
+  async function authRequest(path, options) {
+    const res = await fetch(apiUrl(path), options);
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (err) {
+      data = null;
+    }
+    if (!res.ok) {
+      const raw = (data && (data.msg || data.message || data.error_description || data.error)) || ('HTTP ' + res.status);
+      throw new Error(translateAuthError(raw));
+    }
+    return data;
+  }
+
+  function translateAuthError(message) {
+    const text = String(message || '');
+    if (/Invalid login credentials/i.test(text)) return '邮箱或密码错误';
+    if (/Email not confirmed/i.test(text)) return '邮箱尚未验证，请先查收确认邮件';
+    if (/User already registered/i.test(text)) return '该邮箱已注册，请直接登录';
+    if (/Password should be at least/i.test(text)) return '密码至少 6 位';
+    if (/Failed to fetch|NetworkError/i.test(text)) return '网络不可用，已保持本地模式';
+    return text;
+  }
+
+  function saveSession(data) {
+    if (!data || !data.access_token) return;
+    app.sync.session = {
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token,
+      expiresAt: Date.now() + (data.expires_in || 3600) * 1000,
+      userId: data.user && data.user.id,
+      email: data.user && data.user.email
+    };
+    try {
+      localStorage.setItem(SYNC_KEY, JSON.stringify(app.sync.session));
+    } catch (err) {
+      console.warn('登录状态保存失败', err);
+    }
+  }
+
+  async function signIn() {
+    if (!SYNC_ENABLED) return;
+    const email = dom.authEmail.value.trim();
+    const password = dom.authPassword.value;
+    if (!email || !password) {
+      setSyncStatus('请填写邮箱和密码');
+      return;
+    }
+
+    setSyncStatus('登录中…');
+    try {
+      const data = await authRequest('/auth/v1/token?grant_type=password', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ email: email, password: password })
+      });
+      saveSession(data);
+      dom.authPassword.value = '';
+      updateSyncUI();
+      await syncNow('login');
+    } catch (err) {
+      setSyncStatus('登录失败：' + err.message);
+    }
+  }
+
+  async function signUp() {
+    if (!SYNC_ENABLED) return;
+    const email = dom.authEmail.value.trim();
+    const password = dom.authPassword.value;
+    if (!email || !password) {
+      setSyncStatus('请填写邮箱和密码');
+      return;
+    }
+
+    setSyncStatus('注册中…');
+    try {
+      const data = await authRequest('/auth/v1/signup', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ email: email, password: password })
+      });
+      // 关闭邮箱确认时 Supabase 会直接返回会话；开启确认时只返回用户信息
+      if (data && data.access_token) {
+        saveSession(data);
+        dom.authPassword.value = '';
+        updateSyncUI();
+        await syncNow('signup');
+      } else {
+        setSyncStatus('注册成功，请查收确认邮件后登录');
+      }
+    } catch (err) {
+      setSyncStatus('注册失败：' + err.message);
+    }
+  }
+
+  async function signOut() {
+    const session = app.sync.session;
+    if (session) {
+      // 服务端登出失败不影响本地：先清本地会话
+      try {
+        await fetch(apiUrl('/auth/v1/logout'), {
+          method: 'POST',
+          headers: Object.assign({ Authorization: 'Bearer ' + session.accessToken }, authHeaders())
+        });
+      } catch (err) {
+        // 离线登出时忽略即可
+      }
+    }
+    app.sync.session = null;
+    try {
+      localStorage.removeItem(SYNC_KEY);
+    } catch (err) {
+      // 忽略
+    }
+    dom.authPassword.value = '';
+    updateSyncUI();
+    toast('已退出云同步，本地数据保留');
+  }
+
+  // 访问令牌过期自动刷新；刷新失败则视为未登录，答题不受影响
+  async function ensureSession() {
+    const session = app.sync.session;
+    if (!session) return null;
+    if (session.expiresAt && session.expiresAt - Date.now() > 60000) return session;
+    if (!session.refreshToken) {
+      app.sync.session = null;
+      localStorage.removeItem(SYNC_KEY);
+      updateSyncUI();
+      return null;
+    }
+
+    try {
+      const data = await authRequest('/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ refresh_token: session.refreshToken })
+      });
+      saveSession(data);
+      updateSyncUI();
+      return app.sync.session;
+    } catch (err) {
+      app.sync.session = null;
+      localStorage.removeItem(SYNC_KEY);
+      updateSyncUI();
+      return null;
+    }
+  }
+
+  function syncHeaders(session) {
+    return {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: 'Bearer ' + session.accessToken,
+      'Content-Type': 'application/json'
+    };
+  }
+
+  async function fetchCloudState(session) {
+    const url = apiUrl('/rest/v1/quiz_state?select=records,wrong,fav,exams&user_id=eq.' + encodeURIComponent(session.userId));
+    const res = await fetch(url, { headers: syncHeaders(session) });
+    if (!res.ok) throw new Error('读取云端失败（HTTP ' + res.status + '）');
+    const rows = await res.json();
+    return rows && rows.length ? rows[0] : null;
+  }
+
+  async function pushCloudState(session, state) {
+    const res = await fetch(apiUrl('/rest/v1/quiz_state'), {
+      method: 'POST',
+      headers: Object.assign(syncHeaders(session), {
+        Prefer: 'resolution=merge-duplicates,return=minimal'
+      }),
+      body: JSON.stringify([{
+        user_id: session.userId,
+        records: state.records,
+        wrong: state.wrong,
+        fav: state.fav,
+        exams: state.exams,
+        updated_at: new Date().toISOString()
+      }])
+    });
+    if (!res.ok) throw new Error('写入云端失败（HTTP ' + res.status + '）');
+  }
+
+  async function deleteCloudState() {
+    if (!SYNC_ENABLED || !app.sync.session) return;
+    const session = app.sync.session;
+    try {
+      await fetch(apiUrl('/rest/v1/quiz_state?user_id=eq.' + encodeURIComponent(session.userId)), {
+        method: 'DELETE',
+        headers: syncHeaders(session)
+      });
+    } catch (err) {
+      console.warn('云端数据清除失败', err);
+    }
+  }
+
+  function snapshotLocal() {
+    return cloneData({
+      records: app.store.records,
+      wrong: app.store.wrong,
+      fav: app.store.fav,
+      exams: app.store.exams
+    });
+  }
+
+  function cloneData(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function unionKeys(a, b) {
+    const set = {};
+    Object.keys(a || {}).forEach(function (key) { set[key] = true; });
+    Object.keys(b || {}).forEach(function (key) { set[key] = true; });
+    return Object.keys(set);
+  }
+
+  function isEmptyState(state) {
+    if (!state) return true;
+    return !Object.keys(state.records || {}).length &&
+      !Object.keys(state.wrong || {}).length &&
+      !Object.keys(state.fav || {}).length &&
+      !(state.exams || []).length;
+  }
+
+  /**
+   * 合并规则（简单可预期）：
+   * 1. 云端为空：直接上传本地。
+   * 2. 云端非空：以云端为准，再并入本地较新的部分，避免丢掉新做的题。
+   *    - 做题记录：次数取两边较大值，最近作答信息取时间较新的一方。
+   *    - 错题：取并集，次数与时间取较大值；若最近一次已答对则移出。
+   *    - 收藏：取并集（取消收藏不会跨设备同步）。
+   *    - 考试历史：按考试 id 去重后合并，保留最近 20 条。
+   */
+  function mergeSyncedState(cloud, local) {
+    const records = {};
+    unionKeys(cloud.records, local.records).forEach(function (id) {
+      const c = cloud.records[id];
+      const l = local.records[id];
+      if (!c) { records[id] = l; return; }
+      if (!l) { records[id] = c; return; }
+
+      const newer = (l.lastAt || 0) > (c.lastAt || 0) ? l : c;
+      records[id] = {
+        attempts: Math.max(c.attempts || 0, l.attempts || 0),
+        correct: Math.max(c.correct || 0, l.correct || 0),
+        lastAnswer: newer.lastAnswer,
+        lastCorrect: newer.lastCorrect,
+        lastAt: Math.max(c.lastAt || 0, l.lastAt || 0)
+      };
+    });
+
+    const wrong = {};
+    unionKeys(cloud.wrong, local.wrong).forEach(function (id) {
+      const c = cloud.wrong[id];
+      const l = local.wrong[id];
+      const at = Math.max((c && c.at) || 0, (l && l.at) || 0);
+      const rec = records[id];
+      // 与本地规则一致：最近一次已经答对，就不再留在错题本
+      if (rec && rec.lastCorrect && (rec.lastAt || 0) >= at) return;
+      wrong[id] = {
+        count: Math.max((c && c.count) || 0, (l && l.count) || 0),
+        at: at
+      };
+    });
+
+    const fav = Object.assign({}, cloud.fav || {}, local.fav || {});
+    return {
+      records: records,
+      wrong: wrong,
+      fav: fav,
+      exams: mergeExamLists(cloud.exams, local.exams)
+    };
+  }
+
+  function mergeExamLists(cloudExams, localExams) {
+    const map = {};
+    (cloudExams || []).concat(localExams || []).forEach(function (exam) {
+      if (!exam || !exam.id) return;
+      map[exam.id] = exam;
+    });
+    return Object.keys(map)
+      .map(function (id) { return map[id]; })
+      .sort(function (a, b) { return (b.at || 0) - (a.at || 0); })
+      .slice(0, MAX_EXAMS);
+  }
+
+  function applySyncedState(state) {
+    app.sync.applying = true;
+    app.store.records = state.records || {};
+    app.store.wrong = state.wrong || {};
+    app.store.fav = state.fav || {};
+    app.store.exams = state.exams || [];
+    saveStore(true);
+    app.sync.applying = false;
+
+    if (app.questions.length) {
+      renderHome();
+      renderStats();
+    }
+  }
+
+  async function syncNow(reason) {
+    if (!SYNC_ENABLED) return;
+    const session = await ensureSession();
+    if (!session) {
+      setSyncStatus('未登录');
+      return;
+    }
+    if (app.sync.syncing) return;
+
+    app.sync.syncing = true;
+    setSyncStatus('同步中…');
+    try {
+      const cloud = await fetchCloudState(session);
+      const local = snapshotLocal();
+      // 云端还没有任何数据时，以本地为准直接上传；否则先合并再回写
+      const merged = isEmptyState(cloud) ? local : mergeSyncedState(cloud, local);
+      applySyncedState(merged);
+      await pushCloudState(session, merged);
+      setSyncStatus('已同步 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
+    } catch (err) {
+      setSyncStatus('同步失败：' + err.message);
+    } finally {
+      app.sync.syncing = false;
+    }
+  }
+
+  // 本地写入后延迟同步，合并网络抖动期间的连续作答
+  function scheduleSync() {
+    if (!SYNC_ENABLED || !app.sync.session || app.sync.applying) return;
+    if (app.sync.timer) clearTimeout(app.sync.timer);
+    app.sync.timer = setTimeout(function () {
+      app.sync.timer = null;
+      syncNow('auto');
+    }, 2500);
   }
 
   /* ---------------------------- 本地存储 ---------------------------- */
@@ -1206,12 +1635,14 @@
     }
   }
 
-  function saveStore() {
+  function saveStore(skipSync) {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(app.store));
     } catch (err) {
       console.warn('本地数据保存失败', err);
     }
+    // 登录后本地每次落盘都安排一次延迟同步；skipSync 用于主题、同步回写等不需要上传的场景
+    if (!skipSync) scheduleSync();
   }
 
   /* ---------------------------- 工具函数 ---------------------------- */
