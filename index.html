@@ -34,13 +34,18 @@
 
     <header class="topbar hidden">
       <div class="topbar-inner">
-        <button id="btn-back" class="icon-btn hidden" type="button" aria-label="返回首页">‹</button>
-        <div class="brand">
-          <span class="brand-mark">二建</span>
-          <span class="brand-text" id="topbar-title">刷题助手</span>
+        <div class="topbar-left">
+          <button id="btn-back" class="icon-btn hidden" type="button" aria-label="返回首页">‹</button>
+          <div class="brand">
+            <span class="brand-mark">二建</span>
+            <span class="brand-text" id="topbar-title">刷题助手</span>
+          </div>
         </div>
-        <button id="btn-theme" class="theme-btn" type="button" aria-label="切换主题">跟随系统</button>
-        <button id="btn-lock" class="theme-btn" type="button" aria-label="锁定并退出" title="清除解锁状态并返回密码页">锁定</button>
+        <button id="btn-sync" class="theme-btn topbar-sync hidden" type="button" aria-label="跨设备同步">未登录</button>
+        <div class="topbar-right">
+          <button id="btn-theme" class="theme-btn" type="button" aria-label="切换主题">跟随系统</button>
+          <button id="btn-lock" class="theme-btn" type="button" aria-label="锁定并退出" title="清除解锁状态并返回密码页">锁定</button>
+        </div>
       </div>
       <div id="top-progress" class="top-progress hidden" aria-hidden="true">
         <span id="top-progress-fill"></span>
@@ -79,35 +84,6 @@
               <select id="filter-chapter"></select>
             </label>
           </div>
-        </section>
-
-        <section class="card sync-card hidden" id="sync-card">
-          <div class="card-head">
-            <h2>跨设备同步</h2>
-            <span class="muted" id="sync-status">未登录</span>
-          </div>
-          <form class="sync-form" id="auth-form" autocomplete="on">
-            <label class="field">
-              <span>邮箱</span>
-              <input id="auth-email" type="email" autocomplete="email" placeholder="you@example.com" required>
-            </label>
-            <label class="field">
-              <span>密码</span>
-              <input id="auth-password" type="password" autocomplete="current-password" placeholder="至少 6 位" minlength="6" required>
-            </label>
-            <div class="sync-actions">
-              <button class="btn primary" type="submit" id="btn-login">登录</button>
-              <button class="btn ghost" type="button" id="btn-signup">注册</button>
-            </div>
-          </form>
-          <div class="sync-user hidden" id="sync-user">
-            <p class="sync-email">已登录：<strong id="sync-email"></strong></p>
-            <div class="sync-actions">
-              <button class="btn" type="button" id="btn-sync-now">立即同步</button>
-              <button class="btn ghost" type="button" id="btn-logout">退出登录</button>
-            </div>
-          </div>
-          <p class="sync-hint" id="sync-hint">离线优先：做题先存本机，登录后自动与云端合并。</p>
         </section>
 
         <div class="section-head">
@@ -269,6 +245,41 @@
       <button class="bar-btn" id="btn-prev" type="button">上一题</button>
       <button class="bar-btn" id="btn-fav" type="button">☆ 收藏</button>
       <button class="bar-btn primary" id="btn-main" type="button">下一题</button>
+    </div>
+
+    <div class="modal hidden" id="sync-modal" role="dialog" aria-modal="true" aria-labelledby="sync-modal-title">
+      <div class="modal-mask" id="sync-mask"></div>
+      <div class="modal-panel" role="document">
+        <div class="modal-head">
+          <h2 id="sync-modal-title">跨设备同步</h2>
+          <div class="modal-head-right">
+            <span class="sync-status" id="sync-status">未登录</span>
+            <button class="modal-close" id="btn-sync-close" type="button" aria-label="关闭">×</button>
+          </div>
+        </div>
+        <form class="sync-form" id="auth-form" autocomplete="on">
+          <label class="field">
+            <span>邮箱</span>
+            <input id="auth-email" type="email" autocomplete="email" placeholder="邮箱地址" required>
+          </label>
+          <label class="field">
+            <span>密码</span>
+            <input id="auth-password" type="password" autocomplete="current-password" placeholder="密码" required>
+          </label>
+          <button class="btn primary block" type="submit" id="btn-login">登录</button>
+        </form>
+        <div class="sync-user hidden" id="sync-user">
+          <div class="sync-account">
+            <span>当前账号</span>
+            <strong id="sync-email"></strong>
+          </div>
+          <div class="sync-actions">
+            <button class="btn ghost" type="button" id="btn-sync-now">立即同步</button>
+            <button class="btn ghost" type="button" id="btn-logout">退出登录</button>
+          </div>
+        </div>
+        <p class="sync-hint">离线优先：答题先存本机，登录后自动合并。</p>
+      </div>
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>

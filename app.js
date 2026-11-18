@@ -59,7 +59,8 @@
       session: null,
       timer: null,
       syncing: false,
-      applying: false
+      applying: false,
+      statusText: '未登录'
     }
   };
 
@@ -93,18 +94,18 @@
     dom.topProgress = $('#top-progress');
     dom.topProgressFill = $('#top-progress-fill');
 
-    dom.syncCard = $('#sync-card');
+    dom.btnSync = $('#btn-sync');
+    dom.syncModal = $('#sync-modal');
+    dom.syncMask = $('#sync-mask');
+    dom.btnSyncClose = $('#btn-sync-close');
     dom.syncStatus = $('#sync-status');
     dom.authForm = $('#auth-form');
     dom.authEmail = $('#auth-email');
     dom.authPassword = $('#auth-password');
-    dom.btnLogin = $('#btn-login');
-    dom.btnSignup = $('#btn-signup');
     dom.syncUser = $('#sync-user');
     dom.syncEmail = $('#sync-email');
     dom.btnSyncNow = $('#btn-sync-now');
     dom.btnLogout = $('#btn-logout');
-    dom.syncHint = $('#sync-hint');
 
     dom.heroDesc = $('#hero-desc');
     dom.homeTotal = $('#home-total');
@@ -236,16 +237,21 @@
     if (media.addEventListener) media.addEventListener('change', onSchemeChange);
     else if (media.addListener) media.addListener(onSchemeChange);
 
-    // 云同步入口：未配置 Supabase 时这些节点不显示，绑定也不会影响本地功能
+    // 云同步入口：未配置 Supabase 时按钮不显示，绑定也不会影响本地功能
     if (SYNC_ENABLED) {
+      dom.btnSync.addEventListener('click', openSyncModal);
+      dom.btnSyncClose.addEventListener('click', closeSyncModal);
+      dom.syncMask.addEventListener('click', closeSyncModal);
       dom.authForm.addEventListener('submit', function (e) {
         e.preventDefault();
         signIn();
       });
-      dom.btnSignup.addEventListener('click', signUp);
       dom.btnLogout.addEventListener('click', signOut);
       dom.btnSyncNow.addEventListener('click', function () {
         syncNow('manual');
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && !dom.syncModal.classList.contains('hidden')) closeSyncModal();
       });
     }
   }
@@ -315,6 +321,7 @@
     dom.btnHandin.classList.add('hidden');
     dom.quizTimer.classList.add('hidden');
     dom.toast.classList.remove('show');
+    closeSyncModal();
     showGate();
   }
 
@@ -1225,7 +1232,7 @@
   function initSync() {
     if (!SYNC_ENABLED) return;
 
-    dom.syncCard.classList.remove('hidden');
+    dom.btnSync.classList.remove('hidden');
     try {
       const raw = localStorage.getItem(SYNC_KEY);
       if (raw) app.sync.session = JSON.parse(raw);
@@ -1242,14 +1249,41 @@
     dom.syncUser.classList.toggle('hidden', !session);
     if (session) {
       dom.syncEmail.textContent = session.email || session.userId || '已登录';
-      setSyncStatus('已登录');
+      setSyncStatus(app.sync.statusText === '未登录' ? '已登录' : app.sync.statusText);
     } else {
       setSyncStatus('未登录');
     }
   }
 
+  function openSyncModal() {
+    if (!SYNC_ENABLED) return;
+    dom.syncModal.classList.remove('hidden');
+    document.body.classList.add('modal-open');
+    if (!app.sync.session) {
+      window.setTimeout(function () {
+        dom.authEmail.focus();
+      }, 0);
+    }
+  }
+
+  function closeSyncModal() {
+    dom.syncModal.classList.add('hidden');
+    document.body.classList.remove('modal-open');
+  }
+
+  // 同步状态同时写入弹窗和顶栏按钮，顶栏只显示简短状态
   function setSyncStatus(text) {
+    app.sync.statusText = text;
     if (dom.syncStatus) dom.syncStatus.textContent = text;
+    if (!dom.btnSync) return;
+
+    let label = '同步';
+    if (!app.sync.session) label = '未登录';
+    else if (text.indexOf('同步中') === 0) label = '同步中';
+    else if (text.indexOf('已同步') === 0) label = '已同步';
+    else if (text.indexOf('同步失败') === 0) label = '同步失败';
+    dom.btnSync.textContent = label;
+    dom.btnSync.title = '跨设备同步 · ' + text;
   }
 
   function apiUrl(path) {
@@ -1282,7 +1316,6 @@
     const text = String(message || '');
     if (/Invalid login credentials/i.test(text)) return '邮箱或密码错误';
     if (/Email not confirmed/i.test(text)) return '邮箱尚未验证，请先查收确认邮件';
-    if (/User already registered/i.test(text)) return '该邮箱已注册，请直接登录';
     if (/Password should be at least/i.test(text)) return '密码至少 6 位';
     if (/Failed to fetch|NetworkError/i.test(text)) return '网络不可用，已保持本地模式';
     return text;
@@ -1326,36 +1359,6 @@
       await syncNow('login');
     } catch (err) {
       setSyncStatus('登录失败：' + err.message);
-    }
-  }
-
-  async function signUp() {
-    if (!SYNC_ENABLED) return;
-    const email = dom.authEmail.value.trim();
-    const password = dom.authPassword.value;
-    if (!email || !password) {
-      setSyncStatus('请填写邮箱和密码');
-      return;
-    }
-
-    setSyncStatus('注册中…');
-    try {
-      const data = await authRequest('/auth/v1/signup', {
-        method: 'POST',
-        headers: authHeaders(),
-        body: JSON.stringify({ email: email, password: password })
-      });
-      // 关闭邮箱确认时 Supabase 会直接返回会话；开启确认时只返回用户信息
-      if (data && data.access_token) {
-        saveSession(data);
-        dom.authPassword.value = '';
-        updateSyncUI();
-        await syncNow('signup');
-      } else {
-        setSyncStatus('注册成功，请查收确认邮件后登录');
-      }
-    } catch (err) {
-      setSyncStatus('注册失败：' + err.message);
     }
   }
 
