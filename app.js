@@ -61,8 +61,11 @@
     sync: {
       session: null,
       timer: null,
+      draftTimer: null,
       syncing: false,
       applying: false,
+      // 云端若未加 exam_draft 列，自动降级为只同步学习数据
+      draftSupported: true,
       statusText: '未登录'
     }
   };
@@ -243,10 +246,20 @@
       dom.topbar.classList.toggle('scrolled', window.scrollY > 4);
     }, { passive: true });
 
-    // 离开页面/切到后台时落盘考试草稿，endAt 为绝对时间，回来按真实时间续算
-    window.addEventListener('beforeunload', saveExamDraft);
+    // 考试计时采用“离开即暂停”：关闭/刷新/切后台时暂停并落盘当前剩余时间
+    const pauseAndSaveExam = function () {
+      pauseExamTimer();
+      saveExamDraft(true);
+    };
+    window.addEventListener('beforeunload', pauseAndSaveExam);
+    window.addEventListener('pagehide', pauseAndSaveExam);
     document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState === 'hidden') saveExamDraft();
+      if (document.visibilityState === 'hidden') {
+        pauseAndSaveExam();
+      } else if (document.body.dataset.view === 'quiz' && app.session && app.session.mode === 'exam' && !app.session.exam.submitted) {
+        // 回到前台继续考试：从暂停时保存的剩余时间接着走
+        resumeExamTimer();
+      }
     });
 
     // 系统返回/侧滑：按页面级历史回退，不参与答题页内部的上一题
@@ -335,8 +348,9 @@
 
   function lockApp() {
     if (app.session && app.session.mode === 'exam' && !app.session.exam.submitted) {
-      if (!window.confirm('锁定后本次考试进度会保留，重新解锁后可继续；考试计时不会暂停。确定锁定吗？')) return;
-      saveExamDraft();
+      if (!window.confirm('锁定后本次考试进度会保留，重新解锁后可继续；考试计时将暂停。确定锁定吗？')) return;
+      pauseExamTimer();
+      saveExamDraft(true);
     }
 
     stopTimer();
@@ -653,7 +667,8 @@
     // 已有草稿时，开始新考试视为放弃旧草稿
     if (readExamDraft()) {
       if (!window.confirm('已有未完成的模拟考试。开始新考试将放弃原草稿，确定吗？')) return;
-      clearExamDraft();
+      // 新考试会立即写入并同步草稿，这里只清本地，避免与随后的上传竞争
+      clearExamDraft(true);
     }
 
     let size = sizeArg || parseInt(dom.examSize.value, 10) || pool.length;
@@ -672,8 +687,10 @@
       exam: {
         size: size,
         duration: duration,
-        endAt: Date.now() + duration * 1000,
+        // 暂停制计时：remaining 为剩余秒数，runningSince 为本段计时起点
         remaining: duration,
+        runningSince: Date.now(),
+        paused: false,
         submitted: false
       }
     };
@@ -953,13 +970,13 @@
   /* ---------------------------- 模拟考试 ---------------------------- */
 
   /**
-   * 考试草稿只存本机，不进入云端同步：
-   * { ids, index, entries(仅 selected), startedAt, duration, endAt, size }
-   * endAt 为绝对时间，刷新/关闭页面后按真实时间续算剩余时长。
+   * 考试草稿：{ ids, index, entries(仅 selected), startedAt, duration, remaining, size }
+   * 计时采用“离开即暂停”：remaining 保存退出那一刻的剩余秒数，
+   * 重新进入时从它接着走；登录后随账号同步到云端。
    */
-  function saveExamDraft() {
+  function draftFromSession() {
     const s = app.session;
-    if (!s || s.mode !== 'exam' || !s.exam || s.exam.submitted) return;
+    if (!s || s.mode !== 'exam' || !s.exam || s.exam.submitted) return null;
 
     const entries = {};
     s.ids.forEach(function (id) {
@@ -967,50 +984,103 @@
       entries[id] = { selected: entry && entry.selected ? entry.selected.slice() : [] };
     });
 
+    return {
+      ids: s.ids.slice(),
+      index: s.index,
+      entries: entries,
+      startedAt: s.startedAt,
+      duration: s.exam.duration,
+      remaining: examRemainingSeconds(),
+      size: s.exam.size,
+      updatedAt: Date.now()
+    };
+  }
+
+  // flush 为 true 时立即尝试推送云端，用于关闭/刷新等页面即将卸载的场景
+  function saveExamDraft(flush) {
+    const draft = draftFromSession();
+    if (!draft) return;
+    writeExamDraft(draft);
+    if (flush) pushCloudDraft();
+    else scheduleDraftSync();
+  }
+
+  function writeExamDraft(draft) {
     try {
-      localStorage.setItem(EXAM_DRAFT_KEY, JSON.stringify({
-        ids: s.ids.slice(),
-        index: s.index,
-        entries: entries,
-        startedAt: s.startedAt,
-        duration: s.exam.duration,
-        endAt: s.exam.endAt,
-        size: s.exam.size
-      }));
+      if (draft) localStorage.setItem(EXAM_DRAFT_KEY, JSON.stringify(draft));
+      else localStorage.removeItem(EXAM_DRAFT_KEY);
     } catch (err) {
       console.warn('考试草稿保存失败', err);
     }
+    renderExamDraftCard();
   }
 
-  function readExamDraft() {
+  function readDraftRaw() {
     try {
       const raw = localStorage.getItem(EXAM_DRAFT_KEY);
-      if (!raw) return null;
-      const draft = JSON.parse(raw);
-      if (!draft || !Array.isArray(draft.ids) || !draft.ids.length) return null;
-      if (!draft.duration || !draft.endAt) return null;
-
-      // 题库若发生变化，移除已不存在的题号
-      draft.ids = draft.ids.filter(function (id) { return !!app.byId[id]; });
-      return draft.ids.length ? draft : null;
+      return raw ? normalizeDraft(JSON.parse(raw)) : null;
     } catch (err) {
       return null;
     }
   }
 
-  function clearExamDraft() {
-    try {
-      localStorage.removeItem(EXAM_DRAFT_KEY);
-    } catch (err) {
-      // 隐私模式下可能无法写入，忽略即可
+  // 兼容旧版本草稿：没有 remaining 时，按旧的绝对结束时间换算一次
+  function normalizeDraft(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    if (!Array.isArray(raw.ids) || !raw.ids.length) return null;
+    if (typeof raw.duration !== 'number' || !raw.duration) return null;
+
+    let remaining = typeof raw.remaining === 'number' ? raw.remaining : null;
+    if (remaining === null) {
+      remaining = typeof raw.endAt === 'number'
+        ? Math.max(0, Math.ceil((raw.endAt - Date.now()) / 1000))
+        : raw.duration;
     }
-    renderExamDraftCard();
+    remaining = Math.max(0, Math.min(raw.duration, Math.round(remaining)));
+
+    const ids = raw.ids.filter(function (id) { return typeof id === 'string'; });
+    if (!ids.length) return null;
+
+    const entries = {};
+    ids.forEach(function (id) {
+      const saved = raw.entries && raw.entries[id];
+      entries[id] = {
+        selected: (saved && Array.isArray(saved.selected) ? saved.selected : [])
+          .filter(function (letter) { return /^[A-F]$/.test(letter); })
+      };
+    });
+
+    return {
+      ids: ids,
+      index: Math.max(0, parseInt(raw.index, 10) || 0),
+      entries: entries,
+      startedAt: raw.startedAt || Date.now(),
+      duration: raw.duration,
+      remaining: remaining,
+      size: Math.min(raw.size || ids.length, ids.length),
+      updatedAt: raw.updatedAt || 0
+    };
+  }
+
+  function readExamDraft() {
+    const draft = readDraftRaw();
+    if (!draft) return null;
+    // 题库若发生变化，移除已不存在的题号
+    draft.ids = draft.ids.filter(function (id) { return !!app.byId[id]; });
+    return draft.ids.length ? draft : null;
+  }
+
+  // skipCloud：只清本地，不动云端（例如清除全部数据时会整行删除）
+  function clearExamDraft(skipCloud) {
+    writeExamDraft(null);
+    if (!skipCloud) clearCloudDraft();
   }
 
   function buildExamSession(draft) {
     const entries = {};
     draft.ids.forEach(function (id) {
       const q = app.byId[id];
+      if (!q) return;
       const saved = draft.entries && draft.entries[id];
       const selected = (saved && Array.isArray(saved.selected) ? saved.selected : [])
         .filter(function (letter) {
@@ -1033,8 +1103,10 @@
       exam: {
         size: Math.min(draft.size || draft.ids.length, draft.ids.length),
         duration: draft.duration,
-        endAt: draft.endAt,
-        remaining: Math.max(0, Math.ceil((draft.endAt - Date.now()) / 1000)),
+        // 从草稿保存的剩余时间继续，不按真实流逝扣
+        remaining: Math.max(0, Math.min(draft.duration, draft.remaining)),
+        runningSince: Date.now(),
+        paused: false,
         submitted: false
       }
     };
@@ -1043,14 +1115,14 @@
   function resumeExamDraft(fromHistory) {
     const draft = readExamDraft();
     if (!draft) {
-      clearExamDraft();
+      clearExamDraft(true);
       return false;
     }
 
     app.session = buildExamSession(draft);
 
-    // 离开期间已超过结束时间：按草稿中已答内容自动交卷
-    if (app.session.exam.endAt <= Date.now()) {
+    // 剩余时间已在退出前耗尽：按草稿中已答内容自动交卷
+    if (app.session.exam.remaining <= 0) {
       submitExam(true);
       toast('考试时间已结束，已自动交卷');
       return true;
@@ -1082,9 +1154,9 @@
     if (!app.session || app.session.mode !== 'exam' || app.session.exam.submitted) return;
     if (!window.confirm('放弃本次模拟考试？当前已答内容将清空，且不会计入成绩。')) return;
 
-    stopTimer();
-    clearExamDraft();
+    pauseExamTimer();
     app.session = null;
+    clearExamDraft();
     goBackToHome();
     toast('已放弃本次考试');
   }
@@ -1097,13 +1169,12 @@
       return;
     }
 
-    const remaining = Math.max(0, Math.ceil((draft.endAt - Date.now()) / 1000));
     const answered = draft.ids.filter(function (id) {
       const entry = draft.entries && draft.entries[id];
       return entry && Array.isArray(entry.selected) && entry.selected.length > 0;
     }).length;
 
-    dom.examDraftMeta.textContent = '剩余 ' + formatClock(remaining) +
+    dom.examDraftMeta.textContent = '剩余 ' + formatClock(draft.remaining) +
       ' · 已答 ' + answered + '/' + draft.ids.length;
     dom.examDraftCard.classList.remove('hidden');
   }
@@ -1121,7 +1192,37 @@
     }
   }
 
-  // 用绝对结束时间计算剩余秒数，切到后台再回来也不会走慢
+  // 剩余秒数：暂停时取保存值，运行中按本段经过时间扣减
+  function examRemainingSeconds() {
+    const s = app.session;
+    if (!s || !s.exam) return 0;
+    const e = s.exam;
+    if (e.paused || !e.runningSince) return Math.max(0, Math.round(e.remaining || 0));
+    const elapsed = Math.floor((Date.now() - e.runningSince) / 1000);
+    return Math.max(0, Math.round(e.remaining - elapsed));
+  }
+
+  function pauseExamTimer() {
+    const s = app.session;
+    if (!s || s.mode !== 'exam' || !s.exam || s.exam.submitted) return;
+    if (!s.exam.paused) {
+      s.exam.remaining = examRemainingSeconds();
+      s.exam.paused = true;
+      s.exam.runningSince = null;
+    }
+    stopTimer();
+  }
+
+  function resumeExamTimer() {
+    const s = app.session;
+    if (!s || s.mode !== 'exam' || !s.exam || s.exam.submitted) return;
+    if (s.exam.paused) {
+      s.exam.paused = false;
+      s.exam.runningSince = Date.now();
+    }
+    startTimer();
+  }
+
   function tickTimer() {
     const s = app.session;
     if (!s || s.mode !== 'exam' || !s.exam || s.exam.submitted) {
@@ -1129,21 +1230,22 @@
       return;
     }
 
-    const remain = Math.max(0, Math.ceil((s.exam.endAt - Date.now()) / 1000));
-    s.exam.remaining = remain;
-    updateTimerUI();
+    const remain = examRemainingSeconds();
+    updateTimerUI(remain);
 
     if (remain <= 0) {
+      s.exam.remaining = 0;
       stopTimer();
       submitExam(true);
     }
   }
 
-  function updateTimerUI() {
+  function updateTimerUI(remainArg) {
     const s = app.session;
     if (!s || !s.exam) return;
-    dom.quizTimer.textContent = formatClock(s.exam.remaining);
-    dom.quizTimer.classList.toggle('urgent', s.exam.remaining <= 60);
+    const remain = typeof remainArg === 'number' ? remainArg : examRemainingSeconds();
+    dom.quizTimer.textContent = formatClock(remain);
+    dom.quizTimer.classList.toggle('urgent', remain <= 60);
   }
 
   /**
@@ -1164,6 +1266,7 @@
       if (!window.confirm('还有 ' + unanswered + ' 题未作答，未答题按错误计分，确定交卷吗？')) return;
     }
 
+    const remainingBeforeSubmit = examRemainingSeconds();
     stopTimer();
     s.exam.submitted = true;
     clearExamDraft();
@@ -1195,7 +1298,7 @@
     const score = Math.round(correctCount / s.ids.length * 100);
     const usedSec = Math.min(
       s.exam.duration,
-      Math.max(1, Math.round((Date.now() - s.startedAt) / 1000))
+      Math.max(1, s.exam.duration - remainingBeforeSubmit)
     );
 
     app.store.exams.unshift({
@@ -1347,7 +1450,8 @@
     if (!window.confirm('确定清除全部做题记录、错题、收藏、考试历史和未完成的考试草稿吗？此操作不可恢复。')) return;
     stopTimer();
     app.session = null;
-    clearExamDraft();
+    // 本地草稿随整行云端数据一起删除，这里不再单独推送
+    clearExamDraft(true);
     app.store = defaultStore();
     saveStore(true);
     // 已登录时同步清除云端记录，避免下次登录又把旧数据合并回来
@@ -1401,8 +1505,10 @@
 
   function leaveQuizState() {
     if (app.session && app.session.mode === 'exam' && !app.session.exam.submitted) {
-      saveExamDraft();
-      toast('考试进度已保存，可在首页继续');
+      // 离开考试即暂停：剩余时间写入草稿，回来时从该值继续
+      pauseExamTimer();
+      saveExamDraft(true);
+      toast('考试已暂停，可在首页继续');
     }
     stopTimer();
     app.session = null;
@@ -1450,7 +1556,7 @@
       }
 
       showView('quiz');
-      if (app.session.mode === 'exam') startTimer();
+      if (app.session.mode === 'exam') resumeExamTimer();
       renderQuiz();
       return;
     }
@@ -1471,8 +1577,7 @@
     const view = document.body.dataset.view;
 
     if (view === 'quiz' && app.session && app.session.mode === 'exam' && !app.session.exam.submitted) {
-      if (!window.confirm('退出后本次考试进度会保留，可在首页继续；考试计时不会暂停。确定退出吗？')) return;
-      saveExamDraft();
+      if (!window.confirm('退出后本次考试进度会保留，可在首页继续；考试计时将暂停。确定退出吗？')) return;
     }
 
     goBackToHome();
@@ -1738,29 +1843,105 @@
   }
 
   async function fetchCloudState(session) {
-    const url = apiUrl('/rest/v1/quiz_state?select=records,wrong,fav,exams&user_id=eq.' + encodeURIComponent(session.userId));
-    const res = await fetch(url, { headers: syncHeaders(session) });
+    const base = '/rest/v1/quiz_state?select=records,wrong,fav,exams';
+    const suffix = '&user_id=eq.' + encodeURIComponent(session.userId);
+    let res = await fetch(apiUrl(base + (app.sync.draftSupported ? ',exam_draft' : '') + suffix), {
+      headers: syncHeaders(session)
+    });
+
+    // 云端尚未执行加列 SQL 时，自动降级为只同步学习数据
+    if (!res.ok && app.sync.draftSupported && res.status === 400) {
+      app.sync.draftSupported = false;
+      res = await fetch(apiUrl(base + suffix), { headers: syncHeaders(session) });
+    }
+
     if (!res.ok) throw new Error('读取云端失败（HTTP ' + res.status + '）');
     const rows = await res.json();
     return rows && rows.length ? rows[0] : null;
   }
 
-  async function pushCloudState(session, state) {
-    const res = await fetch(apiUrl('/rest/v1/quiz_state'), {
+  async function pushCloudState(session, state, examDraft) {
+    const body = {
+      user_id: session.userId,
+      records: state.records,
+      wrong: state.wrong,
+      fav: state.fav,
+      exams: state.exams,
+      updated_at: new Date().toISOString()
+    };
+    if (app.sync.draftSupported) body.exam_draft = examDraft || null;
+
+    let res = await fetch(apiUrl('/rest/v1/quiz_state'), {
       method: 'POST',
       headers: Object.assign(syncHeaders(session), {
         Prefer: 'resolution=merge-duplicates,return=minimal'
       }),
-      body: JSON.stringify([{
-        user_id: session.userId,
-        records: state.records,
-        wrong: state.wrong,
-        fav: state.fav,
-        exams: state.exams,
-        updated_at: new Date().toISOString()
-      }])
+      body: JSON.stringify([body])
     });
+
+    if (!res.ok && app.sync.draftSupported && res.status === 400) {
+      app.sync.draftSupported = false;
+      delete body.exam_draft;
+      res = await fetch(apiUrl('/rest/v1/quiz_state'), {
+        method: 'POST',
+        headers: Object.assign(syncHeaders(session), {
+          Prefer: 'resolution=merge-duplicates,return=minimal'
+        }),
+        body: JSON.stringify([body])
+      });
+    }
+
     if (!res.ok) throw new Error('写入云端失败（HTTP ' + res.status + '）');
+  }
+
+  // 只更新考试草稿列，不动学习数据；keepalive 让关闭/刷新时的请求尽量发出
+  async function patchCloudDraft(session, draft, keepalive) {
+    const res = await fetch(
+      apiUrl('/rest/v1/quiz_state?user_id=eq.' + encodeURIComponent(session.userId)),
+      {
+        method: 'PATCH',
+        headers: Object.assign(syncHeaders(session), { Prefer: 'return=minimal' }),
+        body: JSON.stringify({ exam_draft: draft || null, updated_at: new Date().toISOString() }),
+        keepalive: !!keepalive
+      }
+    );
+    return res;
+  }
+
+  async function pushCloudDraft() {
+    if (!SYNC_ENABLED || !app.sync.session || !app.sync.draftSupported) return;
+    const draft = readDraftRaw();
+    const session = await ensureSession();
+    if (!session) return;
+    try {
+      const res = await patchCloudDraft(session, draft, true);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch (err) {
+      // 云端失败不影响本地草稿，下次保存或同步时重试
+      console.warn('考试草稿同步失败', err);
+    }
+  }
+
+  async function clearCloudDraft() {
+    if (!SYNC_ENABLED || !app.sync.session || !app.sync.draftSupported) return;
+    const session = await ensureSession();
+    if (!session) return;
+    try {
+      const res = await patchCloudDraft(session, null, true);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+    } catch (err) {
+      console.warn('云端考试草稿清除失败', err);
+    }
+  }
+
+  // 答题过程中草稿变化较频繁，延迟合并后再上传
+  function scheduleDraftSync() {
+    if (!SYNC_ENABLED || !app.sync.session || !app.sync.draftSupported) return;
+    if (app.sync.draftTimer) clearTimeout(app.sync.draftTimer);
+    app.sync.draftTimer = setTimeout(function () {
+      app.sync.draftTimer = null;
+      pushCloudDraft();
+    }, 1200);
   }
 
   async function deleteCloudState() {
@@ -1881,6 +2062,63 @@
     }
   }
 
+  /**
+   * 草稿合并取舍（不做实时互斥）：
+   * - 本机正在考试时不打断，始终以本机草稿为准；
+   * - 同一次考试（startedAt 相同）：逐题合并已选答案，题号与剩余时间取 updatedAt 较新的一份；
+   * - 不同考试：取 updatedAt 更新的一份，另一份被覆盖；
+   * - 云端草稿剩余时间为 0：视为已结束，不再恢复。
+   * 两台设备同时作答同一份考试时，后保存的一方会覆盖先保存的一方。
+   */
+  function mergeDrafts(local, cloud) {
+    if (local.startedAt !== cloud.startedAt) {
+      return (local.updatedAt || 0) >= (cloud.updatedAt || 0) ? local : cloud;
+    }
+
+    const newer = (local.updatedAt || 0) >= (cloud.updatedAt || 0) ? local : cloud;
+    const older = newer === local ? cloud : local;
+    const entries = {};
+    newer.ids.forEach(function (id) {
+      const n = newer.entries[id];
+      const o = older.entries[id];
+      entries[id] = {
+        selected: n && n.selected.length ? n.selected : (o ? o.selected.slice() : [])
+      };
+    });
+
+    return Object.assign({}, newer, { entries: entries });
+  }
+
+  function mergeDraftWithCloud(cloudRaw) {
+    let cloud = normalizeDraft(cloudRaw);
+    if (cloud && cloud.remaining <= 0) cloud = null;
+
+    // 正在考试：本机优先，避免同步把当前作答覆盖掉
+    if (app.session && app.session.mode === 'exam' && !app.session.exam.submitted) {
+      return draftFromSession();
+    }
+
+    const local = readDraftRaw();
+    if (!local) {
+      if (cloud) {
+        writeExamDraft(cloud);
+        toast('已载入云端未完成的模拟考试');
+        maybeResumeExamDraft();
+      }
+      return cloud;
+    }
+    if (!cloud) return local;
+
+    const merged = mergeDrafts(local, cloud);
+    if (JSON.stringify(merged) !== JSON.stringify(local)) {
+      writeExamDraft(merged);
+      if ((merged.updatedAt || 0) > (local.updatedAt || 0)) {
+        toast('已载入云端更新的考试草稿');
+      }
+    }
+    return merged;
+  }
+
   async function syncNow(reason) {
     if (!SYNC_ENABLED) return;
     const session = await ensureSession();
@@ -1898,7 +2136,9 @@
       // 云端还没有任何数据时，以本地为准直接上传；否则先合并再回写
       const merged = isEmptyState(cloud) ? local : mergeSyncedState(cloud, local);
       applySyncedState(merged);
-      await pushCloudState(session, merged);
+
+      const draft = mergeDraftWithCloud(cloud && cloud.exam_draft);
+      await pushCloudState(session, merged, draft);
       setSyncStatus('已同步 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }));
     } catch (err) {
       const message = /Failed to fetch|NetworkError|Load failed/i.test(err.message)
