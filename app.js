@@ -38,6 +38,34 @@
     judge: '判断题'
   };
 
+  // 首页 hero 每日轮换文案：按本地日期确定，同一天内刷新/换设备保持一致
+  const HERO_LINES = [
+    '每天练几题，通关没问题。',
+    '每天进步一点点，二建证书近一点。',
+    '积少成多，稳扎稳打必上岸。',
+    '刷题不松懈，二建稳稳过。',
+    '日拱一卒，功不唐捐。',
+    '把刷题变成习惯，让通关成为必然。',
+    '每天刷一点，考场从容点。',
+    '多刷一道题，多攒一分底气。',
+    '平时多流汗，考场不遗憾。',
+    '今日多练题，明日早拿证。',
+    '每天一小步，通关一大步。',
+    '刷透一道题，干掉千人敌',
+    '今天多学点，明天稳一点。',
+    '不怕学得慢，就怕断了线。',
+    '每天坚持一点点，通关就在不远处。',
+    '熬过刷题的苦，尝到拿证的甜。',
+    '别人在休息，我在悄悄拔尖。',
+    '稳扎稳打，通关在望。',
+    '每日一练，逢考必过。',
+    '积跬步，至千里。',
+    '学如逆水行舟，不进则退。',
+    '刷题有方，通关不慌。',
+    '现在的每一道题，都是以后涨的薪水',
+    '每天练几题，稳步上岸'
+  ];
+
   const $ = function (selector) {
     return document.querySelector(selector);
   };
@@ -113,6 +141,7 @@
     dom.btnSyncNow = $('#btn-sync-now');
     dom.btnLogout = $('#btn-logout');
 
+    dom.heroTitle = $('#hero-title');
     dom.heroDesc = $('#hero-desc');
     dom.homeTotal = $('#home-total');
     dom.homeDone = $('#home-done');
@@ -321,6 +350,7 @@
     app.nav.depth = 0;
     history.replaceState({ view: 'home', modal: null, depth: 0 }, '');
     showView('home');
+    renderHeroTitle();
 
     // 首次进入才请求题库；锁定后再次解锁直接复用已加载的数据
     if (!app.questions.length) loadQuestions();
@@ -533,7 +563,15 @@
     fillSelect(dom.filterChapter, items, app.filter.chapter);
   }
 
+  function renderHeroTitle() {
+    if (!dom.heroTitle) return;
+    const now = new Date();
+    const days = Math.floor(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86400000);
+    dom.heroTitle.textContent = HERO_LINES[((days % HERO_LINES.length) + HERO_LINES.length) % HERO_LINES.length];
+  }
+
   function renderHome() {
+    renderHeroTitle();
     if (!app.questions.length) return;
 
     const pool = getFiltered();
