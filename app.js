@@ -1202,7 +1202,7 @@
   }
 
   async function fetchCloudState(session) {
-    var base = '/rest/v1/quiz_state?select=records,wrong,fav,exams';
+    var base = '/rest/v1/quiz_state?select=records,wrong,fav,exams,updated_at';
     var suffix = '&user_id=eq.' + encodeURIComponent(session.userId);
     var res = await fetch(apiUrl(base + (syncDraftSupported ? ',exam_draft' : '') + suffix), { headers: syncHeaders(session) });
     if (!res.ok && syncDraftSupported && res.status === 400) {
@@ -1220,7 +1220,7 @@
     return Object.assign({ kind: 'bqproto' }, r);
   }
 
-  async function pushCloudState(session, snap, draft, touchDraft) {
+  async function pushCloudState(session, snap, draft, touchDraft, expectedUpdatedAt) {
     var body = {
       user_id: session.userId,
       records: snap.records,
@@ -1230,21 +1230,34 @@
       updated_at: new Date().toISOString()
     };
     if (syncDraftSupported && touchDraft !== false) body.exam_draft = draft || null;
-    var res = await fetch(apiUrl('/rest/v1/quiz_state'), {
-      method: 'POST',
-      headers: Object.assign(syncHeaders(session), { Prefer: 'resolution=merge-duplicates,return=minimal' }),
-      body: JSON.stringify([body])
-    });
+
+    // 有云端版本号时做条件更新：若期间被另一台设备改过，返回 false 让上层重拉合并
+    var path = '/rest/v1/quiz_state';
+    var method = 'POST';
+    var prefer = 'return=representation';
+    if (expectedUpdatedAt) {
+      method = 'PATCH';
+      path += '?user_id=eq.' + encodeURIComponent(session.userId) + '&updated_at=eq.' + encodeURIComponent(expectedUpdatedAt);
+    }
+    async function send() {
+      return fetch(apiUrl(path), {
+        method: method,
+        headers: Object.assign(syncHeaders(session), { Prefer: prefer }),
+        body: JSON.stringify(method === 'POST' ? [body] : body)
+      });
+    }
+    var res = await send();
     if (!res.ok && syncDraftSupported && res.status === 400) {
       syncDraftSupported = false;
       delete body.exam_draft;
-      res = await fetch(apiUrl('/rest/v1/quiz_state'), {
-        method: 'POST',
-        headers: Object.assign(syncHeaders(session), { Prefer: 'resolution=merge-duplicates,return=minimal' }),
-        body: JSON.stringify([body])
-      });
+      res = await send();
     }
+    if (res.status === 409) return false;
     if (!res.ok) throw new Error('写入云端失败（HTTP ' + res.status + '）');
+    var rows = [];
+    try { rows = await res.json(); } catch (e) { rows = []; }
+    if (method === 'PATCH') return !!(rows && rows.length);
+    return true;
   }
 
   function applyCloudDraft(raw) {
@@ -1300,30 +1313,40 @@
     syncSyncing = true;
     setSyncStatus('同步中…');
     try {
-      var cloud = await fetchCloudState(session);
-      var mergedResult = applyCloudState(cloud);
-      var draft = examDraftForCloud();
-      var touchDraft = true;
-      if (cloud && cloud.exam_draft) {
-        if (cloud.exam_draft.kind === 'bqproto') {
-          draft = applyCloudDraft(cloud.exam_draft) || draft;
-        } else if (!draft) {
-          // 云端是旧版考试草稿：本地没有新草稿时保持原样，不覆盖
-          touchDraft = false;
+      var pushed = false;
+      var attempts = 0;
+      while (!pushed && attempts < 3) {
+        attempts += 1;
+        var cloud = await fetchCloudState(session);
+        var mergedResult = applyCloudState(cloud);
+        var draft = examDraftForCloud();
+        var touchDraft = true;
+        if (cloud && cloud.exam_draft) {
+          if (cloud.exam_draft.kind === 'bqproto') {
+            draft = applyCloudDraft(cloud.exam_draft) || draft;
+          } else if (!draft) {
+            // 云端是旧版考试草稿：本地没有新草稿时保持原样，不覆盖
+            touchDraft = false;
+          }
         }
+        pushed = await pushCloudState(session, mergedResult.snap, draft, touchDraft, cloud && cloud.updated_at);
+        if (!pushed) {
+          await new Promise(function (r) { setTimeout(r, 180 * attempts); });
+          continue;
+        }
+        // 推送成功后落账；同步期间若又发生消费，保留为下一轮增量
+        var extraCoins = (parseInt(state.coinDelta, 10) || 0) - mergedResult.coinDeltaUsed;
+        var extraFragments = (parseInt(state.fragmentDelta, 10) || 0) - mergedResult.fragmentDeltaUsed;
+        state.coins = Math.max(0, mergedResult.coins + extraCoins);
+        state.coinDelta = extraCoins;
+        state.fragments = Math.max(0, mergedResult.fragments + extraFragments);
+        state.fragmentDelta = extraFragments;
+        state.sync = { loggedIn: true, email: session.email || '', lastSync: Date.now() };
+        save();
+        updateTopbar();
+        if (currentView === 'shop') renderShop();
       }
-      await pushCloudState(session, mergedResult.snap, draft, touchDraft);
-      // 推送成功后落账；同步期间若又发生消费，保留为下一轮增量
-      var extraCoins = (parseInt(state.coinDelta, 10) || 0) - mergedResult.coinDeltaUsed;
-      var extraFragments = (parseInt(state.fragmentDelta, 10) || 0) - mergedResult.fragmentDeltaUsed;
-      state.coins = Math.max(0, mergedResult.coins + extraCoins);
-      state.coinDelta = extraCoins;
-      state.fragments = Math.max(0, mergedResult.fragments + extraFragments);
-      state.fragmentDelta = extraFragments;
-      state.sync = { loggedIn: true, email: session.email || '', lastSync: Date.now() };
-      save();
-      updateTopbar();
-      if (currentView === 'shop') renderShop();
+      if (!pushed) throw new Error('云端刚被另一台设备更新，请稍后重试');
       syncStatusText = '已同步 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
       renderSync();
     } catch (e) {
