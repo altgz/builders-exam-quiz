@@ -21,6 +21,28 @@
 
   var TYPE_LABEL = { single: '单选题', multiple: '多选题', judge: '判断题' };
   var MODE_LABEL = { order: '顺序练习', random: '随机练习', wrong: '错题重做', weak: '易错题练习', fav: '收藏练习', exam: '模拟考试' };
+
+  /* 经验 / 等级：答对 +2 XP；Lv1→2 需 50，之后每级需求递增 50 */
+  var XP_PER_CORRECT = 2;
+  function xpNeed(lv) { return 50 * lv; }
+  function levelInfo(xp) {
+    var total = Math.max(0, Math.floor(parseInt(xp, 10) || 0));
+    var lv = 1;
+    var rest = total;
+    while (lv < 999 && rest >= xpNeed(lv)) {
+      rest -= xpNeed(lv);
+      lv += 1;
+    }
+    return { level: lv, cur: rest, need: xpNeed(lv), total: total };
+  }
+  /* 模拟考试交卷按分数一次性结算经验 */
+  function examXpFor(score) {
+    if (score >= 90) return 60;
+    if (score >= 80) return 45;
+    if (score >= 70) return 30;
+    if (score >= 60) return 20;
+    return 10;
+  }
   /* 考试奖金阶梯：只奖 90 分以上；改数字只改这里 */
   var EXAM_REWARD_TIERS = [
     { min: 100, coins: 800, label: '满分王者' },
@@ -454,6 +476,8 @@
       v: 1,
       coins: 0,
       coinSeed: 3,
+      xp: 0,
+      level: 1,
       shopSeed: 3,
       color: 'morandi-green',
       theme: 'light',
@@ -537,6 +561,10 @@
       if (typeof base.dailyGoal !== 'number' || [10, 20, 30].indexOf(base.dailyGoal) < 0) base.dailyGoal = 20;
       if (!base.studyLog || typeof base.studyLog !== 'object') base.studyLog = {};
       if (typeof base.focus !== 'boolean') base.focus = false;
+      // 旧存档没有 XP 字段：从 Lv1 / 0 XP 开始，不报错
+      if (typeof base.xp !== 'number' || !isFinite(base.xp) || base.xp < 0) base.xp = 0;
+      base.xp = Math.floor(base.xp);
+      base.level = levelInfo(base.xp).level;
       return base;
     } catch (e) {
       return base;
@@ -1025,18 +1053,29 @@
       var a = state.answered && state.answered[id];
       wrong[id] = { count: (state.wrongCount && state.wrongCount[id]) || 1, at: (a && a.ts) || 0 };
     });
+    // 云端表结构没有 xp 列：把经验放在保留键 __meta 里随 records 一起同步
+    records.__meta = { xp: parseInt(state.xp, 10) || 0, level: levelInfo(state.xp).level };
     return { records: records, wrong: wrong, fav: state.fav || {}, exams: (state.exams || []).slice(0, 20) };
   }
 
   function emptyCloud(cloud) {
-    return !cloud || (!Object.keys(cloud.records || {}).length && !Object.keys(cloud.wrong || {}).length && !Object.keys(cloud.fav || {}).length && !(cloud.exams || []).length);
+    var recordIds = Object.keys((cloud && cloud.records) || {}).filter(function (id) { return id !== '__meta'; });
+    return !cloud || (!recordIds.length && !Object.keys(cloud.wrong || {}).length && !Object.keys(cloud.fav || {}).length && !(cloud.exams || []).length);
   }
 
   function applyCloudState(cloud) {
+    var cloudMeta = cloud && cloud.records && cloud.records.__meta;
+    var cloudXp = cloudMeta ? (parseInt(cloudMeta.xp, 10) || 0) : 0;
+    if (cloudXp > (parseInt(state.xp, 10) || 0)) {
+      state.xp = cloudXp;
+      state.level = levelInfo(state.xp).level;
+      save();
+      updatePetBubble();
+    }
     if (emptyCloud(cloud)) return syncSnapshot();
     var mergedRecords = {};
     var ids = {};
-    Object.keys(cloud.records || {}).forEach(function (id) { ids[id] = true; });
+    Object.keys(cloud.records || {}).forEach(function (id) { if (id !== '__meta') ids[id] = true; });
     Object.keys(state.answered || {}).forEach(function (id) { ids[id] = true; });
     Object.keys(ids).forEach(function (id) {
       var c = cloud.records && cloud.records[id];
@@ -1083,6 +1122,7 @@
     Object.keys(wrong).forEach(function (id) {
       outWrong[id] = { count: wrongCount[id] || 1, at: wrongAt[id] || 0 };
     });
+    mergedRecords.__meta = { xp: parseInt(state.xp, 10) || 0, level: levelInfo(state.xp).level };
     return { records: mergedRecords, wrong: outWrong, fav: state.fav, exams: state.exams };
   }
 
@@ -1234,15 +1274,46 @@
     renderSync();
   }
 
+  var levelUpTimer = null;
+
+  function petSizeForLevel(lv) {
+    if (lv >= 9) return 92;
+    if (lv >= 7) return 84;
+    if (lv >= 5) return 76;
+    if (lv >= 3) return 68;
+    return 60;
+  }
+
+  function playLevelUp() {
+    if (!els.pet) return;
+    els.pet.classList.remove('is-levelup');
+    void els.pet.offsetWidth;
+    els.pet.classList.add('is-levelup');
+    clearTimeout(levelUpTimer);
+    levelUpTimer = setTimeout(function () { els.pet.classList.remove('is-levelup'); }, 800);
+  }
+
+  function addXp(n) {
+    n = Math.max(0, Math.floor(parseInt(n, 10) || 0));
+    if (!n) return 0;
+    var before = levelInfo(state.xp).level;
+    state.xp = (parseInt(state.xp, 10) || 0) + n;
+    var info = levelInfo(state.xp);
+    state.level = info.level;
+    save();
+    updatePetBubble();
+    if (info.level > before) playLevelUp();
+    return n;
+  }
+
   function updatePetBubble() {
-    var solved = Object.keys(state.solved).length;
-    var lv = Math.floor(solved / 30) + 1;
-    var today = Object.keys(state.daily.ids || {}).length;
-    els.petLevel.textContent = 'Lv.' + lv;
-    els.petExp.style.width = Math.min(100, Math.round((today / goalSize()) * 100)) + '%';
-    els.petGoalText.textContent = today >= goalSize() ? '今天达标啦，超棒！' : '今天还差 ' + (goalSize() - today) + ' 题就达标啦！';
+    var info = levelInfo(state.xp);
+    els.petLevel.textContent = 'Lv.' + info.level + ' · ' + info.total + ' XP';
+    els.petExp.style.width = Math.min(100, Math.round((info.cur / info.need) * 100)) + '%';
+    els.petGoalText.textContent = '距 Lv.' + (info.level + 1) + ' 还需 ' + (info.need - info.cur) + ' XP';
     els.petStreak.textContent = state.streak;
     els.petStreakBadge.classList.toggle('hidden', !state.streak);
+    if (els.pet) els.pet.dataset.size = String(petSizeForLevel(info.level));
 
     var nameEl = $('#pet-name');
     if (nameEl) nameEl.textContent = state.petName || '小鹿';
@@ -1362,7 +1433,14 @@
     $('#count-random').textContent = pool.length + ' 题';
     $('#count-wrong').textContent = wrongCount + ' 题';
     $('#count-fav').textContent = favCount + ' 题';
-    if ($('#count-weak')) $('#count-weak').textContent = weakCount + ' 题';
+    var weakBtn = $('#btn-weak');
+    if (weakBtn) {
+      weakBtn.classList.toggle('is-empty', weakCount === 0);
+      weakBtn.setAttribute('aria-label', weakCount ? '易错题练习，共 ' + weakCount + ' 题' : '易错题练习：同一题答错 3 次才会进来');
+      weakBtn.title = weakCount ? '进入易错题练习' : '答错 3 次才会进来';
+      var weakCountEl = $('#btn-weak-count');
+      if (weakCountEl) weakCountEl.textContent = weakCount;
+    }
     if ($('#weak-open')) {
       $('#weak-open').classList.toggle('hidden', weakCount === 0);
       if ($('#weak-open-count')) $('#weak-open-count').textContent = weakCount;
@@ -2040,6 +2118,7 @@
       try { navigator.vibrate(correct ? 8 : [10, 40, 10]); } catch (e) {}
     }
     if (!isExam) state.coins += gained;
+    if (!isExam && correct) addXp(XP_PER_CORRECT);
     checkBadges();
     if (firstCorrect) rollEgg(q);
 
@@ -2440,12 +2519,17 @@
           updateTopbar();
         }
       }
+      if (!session.xpRewarded) {
+        session.xpRewarded = true;
+        session.examXp = examXpFor(score);
+        addXp(session.examXp);
+      }
       $('#result-exam-reward').classList.remove('hidden');
       $('#result-exam-tier').textContent = tier.coins > 0 ? tier.label : '本次未达奖励线';
       $('#result-exam-coins').textContent = tier.coins > 0 ? '+' + tier.coins + ' 金币' : '0 金币';
       $('#result-exam-text').textContent = tier.coins > 0
-        ? '百分制 ' + score + ' 分，已发放考试奖金，记得回来继续刷题。'
-        : '这次没到奖励线，再来一次。90 分起就有金币奖励。';
+        ? '百分制 ' + score + ' 分，已发放考试奖金，经验 +' + session.examXp + ' XP，记得回来继续刷题。'
+        : '这次没到奖励线，经验 +' + session.examXp + ' XP，再来一次。90 分起就有金币奖励。';
       $('#result-reward').classList.add('hidden');
     } else {
       $('#result-exam-reward').classList.add('hidden');
@@ -3354,6 +3438,7 @@
       toast('易错题已清空');
     });
     $('#btn-start').addEventListener('click', function () { startSession('order'); });
+    $('#btn-weak').addEventListener('click', function () { startSession('weak'); });
     $('#btn-start-exam').addEventListener('click', function () { startSession('exam'); });
     $('#filter-subject').addEventListener('change', renderHome);
     $('#filter-chapter').addEventListener('change', renderHome);

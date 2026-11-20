@@ -971,6 +971,32 @@ html[data-theme="dark"] .option.is-wrong .option-letter {
   pointer-events: none;
 }
 
+/* 等级成长：Lv1–2 60 / Lv3–4 68 / Lv5–6 76 / Lv7–8 84 / Lv9+ 92 */
+.pet-card { --pet-size: 60px; }
+.pet-card[data-size="68"] { --pet-size: 68px; }
+.pet-card[data-size="76"] { --pet-size: 76px; }
+.pet-card[data-size="84"] { --pet-size: 84px; }
+.pet-card[data-size="92"] { --pet-size: 92px; }
+
+.pet-card,
+.pet-card .pet-ball,
+.pet-card .pet-avatar,
+.pet-card .pet-sprite {
+  width: var(--pet-size);
+  height: var(--pet-size);
+}
+
+.pet-card.is-levelup .pet-avatar {
+  animation: petLevelUp 0.66s cubic-bezier(0.3, 0.9, 0.4, 1.15);
+}
+
+@keyframes petLevelUp {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.16); }
+  65% { transform: scale(0.97); }
+  100% { transform: scale(1); }
+}
+
 .pet-sprite {
   width: 60px;
   height: 60px;
@@ -1314,6 +1340,8 @@ html[data-bg="aurora"] .pet-sprite {
   color: var(--accent-strong);
   font-size: 9px;
   font-weight: 700;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .pet-rename {

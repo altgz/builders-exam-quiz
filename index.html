@@ -76,7 +76,12 @@
             <div><strong id="stat-wrong">0</strong><span>当前错题</span></div>
             <div><strong id="stat-acc">0%</strong><span>正确率</span></div>
           </div>
-          <button class="hero-btn" id="btn-start" type="button">开始顺序练习</button>
+          <div class="hero-actions">
+            <button class="hero-btn" id="btn-start" type="button">开始顺序练习</button>
+            <button class="hero-btn secondary" id="btn-weak" type="button" aria-label="易错题练习">
+              <span>易错题</span><b id="btn-weak-count">0</b>
+            </button>
+          </div>
           <div class="hero-quick">
             <button class="hero-ghost" id="btn-quick10" type="button">今日 10 分钟</button>
             <label class="goal-inline">每日目标
@@ -153,12 +158,6 @@
             <span class="mode-count" id="count-wrong">0 题</span>
             <span class="chev">›</span>
           </button>
-          <button class="mode-row" type="button" data-mode="weak">
-            <span class="mode-icon">难</span>
-            <span class="mode-body"><strong>易错题练习</strong><small>同一题累计答错 3 次自动加入 · 可单独移除</small></span>
-            <span class="mode-count" id="count-weak">0 题</span>
-            <span class="chev">›</span>
-          </button>
           <button class="mode-row" type="button" data-mode="fav">
             <span class="mode-icon">藏</span>
             <span class="mode-body"><strong>收藏练习</strong><small>集中回看收藏的题目</small></span>
@@ -194,7 +193,7 @@
           <button class="btn primary block" id="btn-start-exam" type="button">开始考试</button>
         </section>
 
-        <p class="proto-foot">原型数据仅存本机 localStorage（bqproto:v1），不会同步线上。</p>
+        <p class="proto-foot">数据只保存在这台设备，登录账号后可跨设备同步。</p>
       </section>
 
       <!-- ================= 答题页 ================= -->
