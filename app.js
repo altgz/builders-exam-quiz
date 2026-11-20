@@ -475,10 +475,13 @@
     return {
       v: 1,
       coins: 0,
+      coinDelta: 0,
       coinSeed: 3,
       xp: 0,
       level: 1,
       shopSeed: 3,
+      equippedAt: 0,
+      fragmentDelta: 0,
       color: 'morandi-green',
       theme: 'light',
       daily: { date: todayKey(), first: false, ids: {}, goalShown: false },
@@ -542,11 +545,12 @@
         if (!base.wrongCount[id]) delete base.weak[id];
       });
       if (!base.petName) base.petName = '小鹿';
-      if (saved.coinSeed !== 3) { base.coins = 0; base.coinSeed = 3; }
+      if (saved.coinSeed !== 3) { base.coins = 0; base.coinDelta = 0; base.coinSeed = 3; }
       if (saved.shopSeed !== 3) {
         base.owned = {};
         base.equipped = { title: '', bg: '', skin: 'classic', outfit: '', fx: '' };
         base.fragments = 0;
+        base.fragmentDelta = 0;
         base.badges = {};
         base.shopSeed = 3;
       }
@@ -565,6 +569,9 @@
       if (typeof base.xp !== 'number' || !isFinite(base.xp) || base.xp < 0) base.xp = 0;
       base.xp = Math.floor(base.xp);
       base.level = levelInfo(base.xp).level;
+      if (typeof base.coinDelta !== 'number' || !isFinite(base.coinDelta)) base.coinDelta = 0;
+      if (typeof base.fragmentDelta !== 'number' || !isFinite(base.fragmentDelta)) base.fragmentDelta = 0;
+      if (typeof base.equippedAt !== 'number' || !isFinite(base.equippedAt)) base.equippedAt = 0;
       return base;
     } catch (e) {
       return base;
@@ -632,10 +639,13 @@
 
       // 上线前统一归零：迁移不继承任何金币与商城状态，首次进入从 0 开始
       base.coins = 0;
+      base.coinDelta = 0;
       base.coinSeed = 3;
       base.owned = {};
       base.equipped = { title: '', bg: '', skin: 'classic', outfit: '', fx: '' };
+      base.equippedAt = 0;
       base.fragments = 0;
+      base.fragmentDelta = 0;
       base.badges = {};
       base.shopSeed = 3;
       base.color = 'morandi-green';
@@ -658,6 +668,23 @@
 
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  /* 金币/碎片变动都记一份未同步增量，供跨设备合并时只结算一次 */
+  function changeCoins(delta) {
+    delta = Math.round(Number(delta) || 0);
+    if (!delta) return;
+    var before = Math.max(0, parseInt(state.coins, 10) || 0);
+    state.coins = Math.max(0, before + delta);
+    state.coinDelta = (parseInt(state.coinDelta, 10) || 0) + (state.coins - before);
+  }
+
+  function changeFragments(delta) {
+    delta = Math.round(Number(delta) || 0);
+    if (!delta) return;
+    var before = Math.max(0, parseInt(state.fragments, 10) || 0);
+    state.fragments = Math.max(0, before + delta);
+    state.fragmentDelta = (parseInt(state.fragmentDelta, 10) || 0) + (state.fragments - before);
   }
 
   /* ---------------- DOM ---------------- */
@@ -1036,7 +1063,7 @@
       .slice(0, 20);
   }
 
-  function syncSnapshot() {
+  function syncSnapshot(coinsOverride, fragmentsOverride) {
     var records = {};
     Object.keys(state.answered || {}).forEach(function (id) {
       var a = state.answered[id];
@@ -1053,14 +1080,41 @@
       var a = state.answered && state.answered[id];
       wrong[id] = { count: (state.wrongCount && state.wrongCount[id]) || 1, at: (a && a.ts) || 0 };
     });
-    // 云端表结构没有 xp 列：把经验放在保留键 __meta 里随 records 一起同步
-    records.__meta = { xp: parseInt(state.xp, 10) || 0, level: levelInfo(state.xp).level };
+    // 云端表结构没有养成字段：统一放进保留键 __meta，随 records 一起同步
+    records.__meta = {
+      xp: parseInt(state.xp, 10) || 0,
+      level: levelInfo(state.xp).level,
+      coins: typeof coinsOverride === 'number' ? coinsOverride : (parseInt(state.coins, 10) || 0),
+      fragments: typeof fragmentsOverride === 'number' ? fragmentsOverride : (parseInt(state.fragments, 10) || 0),
+      owned: state.owned || {},
+      equipped: state.equipped || {},
+      equippedAt: parseInt(state.equippedAt, 10) || 0,
+      badges: state.badges || {}
+    };
     return { records: records, wrong: wrong, fav: state.fav || {}, exams: (state.exams || []).slice(0, 20) };
   }
 
   function emptyCloud(cloud) {
     var recordIds = Object.keys((cloud && cloud.records) || {}).filter(function (id) { return id !== '__meta'; });
     return !cloud || (!recordIds.length && !Object.keys(cloud.wrong || {}).length && !Object.keys(cloud.fav || {}).length && !(cloud.exams || []).length);
+  }
+
+  function mergeOwned(cloudOwned, localOwned) {
+    var out = {};
+    Object.keys(cloudOwned || {}).forEach(function (k) {
+      if (k.indexOf('sound:') !== 0) out[k] = true;
+    });
+    Object.keys(localOwned || {}).forEach(function (k) { out[k] = true; });
+    return out;
+  }
+
+  function mergeBadges(cloudBadges, localBadges) {
+    var out = {};
+    Object.keys(cloudBadges || {}).forEach(function (k) { out[k] = cloudBadges[k] || 1; });
+    Object.keys(localBadges || {}).forEach(function (k) {
+      out[k] = Math.max(Number(out[k]) || 0, Number(localBadges[k]) || 0) || 1;
+    });
+    return out;
   }
 
   function applyCloudState(cloud) {
@@ -1072,8 +1126,33 @@
       save();
       updatePetBubble();
     }
-    if (emptyCloud(cloud)) return syncSnapshot();
-    var mergedRecords = {};
+
+    // 金币/碎片：云端余额 + 本机未同步增量，避免两台设备直接相加或 max 造成凭空多钱
+    var coinDeltaUsed = parseInt(state.coinDelta, 10) || 0;
+    var fragmentDeltaUsed = parseInt(state.fragmentDelta, 10) || 0;
+    var hasCloudCoins = !!(cloudMeta && typeof cloudMeta.coins === 'number');
+    var hasCloudFragments = !!(cloudMeta && typeof cloudMeta.fragments === 'number');
+    var mergedCoins = hasCloudCoins ? Math.max(0, cloudMeta.coins + coinDeltaUsed) : (parseInt(state.coins, 10) || 0);
+    var mergedFragments = hasCloudFragments ? Math.max(0, cloudMeta.fragments + fragmentDeltaUsed) : (parseInt(state.fragments, 10) || 0);
+
+    if (cloudMeta) {
+      // 已购/徽章只增不减，取并集
+      if (cloudMeta.owned) state.owned = mergeOwned(cloudMeta.owned, state.owned);
+      if (cloudMeta.badges) state.badges = mergeBadges(cloudMeta.badges, state.badges);
+      // 装备取时间较新的一侧
+      var cloudEquipAt = parseInt(cloudMeta.equippedAt, 10) || 0;
+      var localEquipAt = parseInt(state.equippedAt, 10) || 0;
+      if (cloudMeta.equipped && cloudEquipAt >= localEquipAt) {
+        state.equipped = Object.assign({ title: '', bg: '', skin: 'classic', outfit: '', fx: '' }, cloudMeta.equipped);
+        state.equippedAt = cloudEquipAt;
+      }
+    }
+
+    if (emptyCloud(cloud)) {
+      applyEquipped();
+      save();
+      return { snap: syncSnapshot(mergedCoins, mergedFragments), coins: mergedCoins, fragments: mergedFragments, coinDeltaUsed: coinDeltaUsed, fragmentDeltaUsed: fragmentDeltaUsed };
+    }
     var ids = {};
     Object.keys(cloud.records || {}).forEach(function (id) { if (id !== '__meta') ids[id] = true; });
     Object.keys(state.answered || {}).forEach(function (id) { ids[id] = true; });
@@ -1082,7 +1161,6 @@
       var l = state.answered && state.answered[id];
       var localRec = l ? { attempts: (c && c.attempts) || 1, correct: l.correct ? 1 : 0, lastAnswer: l.picked || [], lastCorrect: !!l.correct, lastAt: l.ts || 0 } : null;
       var pick = !c ? localRec : (!localRec ? c : ((localRec.lastAt || 0) > (c.lastAt || 0) ? localRec : c));
-      mergedRecords[id] = pick;
       if (pick) {
         state.answered[id] = { picked: (pick.lastAnswer || []).slice(), correct: !!pick.lastCorrect, ts: pick.lastAt || 0 };
         if (pick.lastCorrect) state.solved[id] = true;
@@ -1114,16 +1192,13 @@
     state.wrongCount = wrongCount;
     state.fav = Object.assign({}, cloud.fav || {}, state.fav || {});
     state.exams = mergeExams(cloud.exams, state.exams);
+    applyEquipped();
     save();
     renderHome();
     updateTopbar();
     updatePetBubble();
-    var outWrong = {};
-    Object.keys(wrong).forEach(function (id) {
-      outWrong[id] = { count: wrongCount[id] || 1, at: wrongAt[id] || 0 };
-    });
-    mergedRecords.__meta = { xp: parseInt(state.xp, 10) || 0, level: levelInfo(state.xp).level };
-    return { records: mergedRecords, wrong: outWrong, fav: state.fav, exams: state.exams };
+    if (currentView === 'shop') renderShop();
+    return { snap: syncSnapshot(mergedCoins, mergedFragments), coins: mergedCoins, fragments: mergedFragments, coinDeltaUsed: coinDeltaUsed, fragmentDeltaUsed: fragmentDeltaUsed };
   }
 
   async function fetchCloudState(session) {
@@ -1226,7 +1301,7 @@
     setSyncStatus('同步中…');
     try {
       var cloud = await fetchCloudState(session);
-      var merged = applyCloudState(cloud);
+      var mergedResult = applyCloudState(cloud);
       var draft = examDraftForCloud();
       var touchDraft = true;
       if (cloud && cloud.exam_draft) {
@@ -1237,9 +1312,18 @@
           touchDraft = false;
         }
       }
-      await pushCloudState(session, merged, draft, touchDraft);
+      await pushCloudState(session, mergedResult.snap, draft, touchDraft);
+      // 推送成功后落账；同步期间若又发生消费，保留为下一轮增量
+      var extraCoins = (parseInt(state.coinDelta, 10) || 0) - mergedResult.coinDeltaUsed;
+      var extraFragments = (parseInt(state.fragmentDelta, 10) || 0) - mergedResult.fragmentDeltaUsed;
+      state.coins = Math.max(0, mergedResult.coins + extraCoins);
+      state.coinDelta = extraCoins;
+      state.fragments = Math.max(0, mergedResult.fragments + extraFragments);
+      state.fragmentDelta = extraFragments;
       state.sync = { loggedIn: true, email: session.email || '', lastSync: Date.now() };
       save();
+      updateTopbar();
+      if (currentView === 'shop') renderShop();
       syncStatusText = '已同步 ' + new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
       renderSync();
     } catch (e) {
@@ -1734,7 +1818,7 @@
         if (roll < acc) { tier = EGG.tiers[i]; break; }
       }
       if (tier.key === 'fragment') {
-        state.fragments = (state.fragments || 0) + tier.amount;
+        changeFragments(tier.amount);
         if (session) session.eggFragments = (session.eggFragments || 0) + tier.amount;
         save();
         updateTopbar();
@@ -1743,7 +1827,7 @@
         toast('彩蛋 · 限定碎片 +' + tier.amount + '（' + state.fragments + '/' + EGG.fragmentCost + '）');
       } else {
         var coins = Math.round(randBetween(tier.min, tier.max) * EGG.valueScale);
-        state.coins += coins;
+        changeCoins(coins);
         if (session) session.eggCoins = (session.eggCoins || 0) + coins;
         save();
         updateTopbar();
@@ -2117,7 +2201,7 @@
     if (navigator.vibrate) {
       try { navigator.vibrate(correct ? 8 : [10, 40, 10]); } catch (e) {}
     }
-    if (!isExam) state.coins += gained;
+    if (!isExam && gained) changeCoins(gained);
     if (!isExam && correct) addXp(XP_PER_CORRECT);
     checkBadges();
     if (firstCorrect) rollEgg(q);
@@ -2514,7 +2598,7 @@
         session.rewarded = true;
         session.examCoins = tier.coins;
         if (tier.coins > 0) {
-          state.coins += tier.coins;
+          changeCoins(tier.coins);
           save();
           updateTopbar();
         }
@@ -2760,7 +2844,7 @@
       toast('碎片还差 ' + (cost - (state.fragments || 0)) + ' 片，答题碰彩蛋慢慢攒');
       return;
     }
-    state.fragments -= cost;
+    changeFragments(-cost);
     state.owned[key] = true;
     equipItem('bg', id);
     save();
@@ -2788,7 +2872,7 @@
       toast('金币还不够，再去做几题吧');
       return;
     }
-    state.coins -= price;
+    changeCoins(-price);
     state.owned[key] = true;
     equipItem(kind, id, true);
   }
@@ -2801,6 +2885,7 @@
     else if (kind === 'skin') { state.equipped.skin = id; state.equipped.outfit = ''; }
     else if (kind === 'outfit') { state.equipped.outfit = id; state.equipped.skin = 'classic'; preloadOutfit(item); }
     else if (kind === 'fx') state.equipped.fx = id;
+    state.equippedAt = Date.now();
     applyEquipped();
     setPose(pose);
     save();
@@ -2812,6 +2897,7 @@
   function equipBase() {
     state.equipped.outfit = '';
     state.equipped.skin = 'classic';
+    state.equippedAt = Date.now();
     applyEquipped();
     setPose(pose);
     save();
