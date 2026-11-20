@@ -1,0 +1,13 @@
+{
+  "name": "二建刷题 · 每天练几题",
+  "short_name": "二建刷题",
+  "description": "二建刷题、清盲点、模拟考试，猫猫陪你备考。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3f6f5",
+  "theme_color": "#5f7d6a",
+  "icons": [
+    { "src": "assets/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

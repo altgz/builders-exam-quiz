@@ -1,98 +1,131 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="auto">
+<html lang="zh-CN" data-color="morandi-green" data-theme="light">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="description" content="二级建造师刷题：按章节练习、错题重做、收藏夹与限时模拟考试，纯前端离线可用。">
-  <meta name="theme-color" content="#f3f6f5" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0b1211" media="(prefers-color-scheme: dark)">
-  <title>二级建造师刷题</title>
-  <link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="二建刷题原型：顺序、随机、错题、收藏与模拟考试，猫猫陪伴养成，数据只存本机。">
+<meta name="theme-color" content="#f3f6f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1211" media="(prefers-color-scheme: dark)">
+<meta property="og:type" content="website">
+<meta property="og:title" content="二建刷题 · 每天练几题，稳步上岸">
+<meta property="og:description" content="刷题、清盲点、模拟考试，还有猫猫陪你一起备考。">
+<meta property="og:image" content="assets/og-cover.png">
+<meta name="twitter:card" content="summary_large_image">
+<title>二建刷题 · 每天练几题，稳步上岸</title>
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="style.min.css">
+<link rel="stylesheet" href="app.min.css">
 </head>
-<body>
-  <div class="app" id="app">
-    <section class="gate" id="gate" aria-label="访问密码">
-      <div class="gate-inner">
-        <form class="gate-form" id="gate-form">
-          <input
-            class="gate-input"
-            id="gate-input"
-            type="password"
-            autocomplete="current-password"
-            autocapitalize="off"
-            spellcheck="false"
-            placeholder="请输入访问密码"
-            aria-label="访问密码"
-            required
-          >
-          <p class="gate-error hidden" id="gate-error" role="alert"></p>
-          <button class="btn primary block" type="submit">进入刷题</button>
-        </form>
-        <p class="gate-foot">仅限本人学习使用</p>
-      </div>
-    </section>
+<body data-page="home" data-view="home" class="gate-locked">
+  <section class="gate" id="gate" aria-label="访问密码">
+    <div class="gate-inner">
+      <form class="gate-form" id="gate-form">
+        <input class="gate-input" id="gate-input" type="password" autocomplete="current-password" autocapitalize="off" spellcheck="false" placeholder="请输入访问密码" aria-label="访问密码" required>
+        <p class="gate-error hidden" id="gate-error" role="alert"></p>
+        <button class="btn primary block" type="submit">进入刷题</button>
+      </form>
+      <p class="gate-foot">仅限本人学习使用</p>
+    </div>
+  </section>
 
-    <header class="topbar hidden">
+  <div class="app">
+    <header class="topbar" id="topbar">
       <div class="topbar-inner">
         <div class="topbar-left">
-          <button id="btn-back" class="icon-btn hidden" type="button" aria-label="返回首页">‹</button>
+          <button id="btn-back" class="icon-btn hit-44 hidden" type="button" aria-label="返回首页">‹</button>
           <div class="brand">
             <span class="brand-mark">二建</span>
-            <span class="brand-text" id="topbar-title">刷题助手</span>
+            <span class="brand-text" id="brand-text">刷题助手</span>
           </div>
         </div>
-        <button id="btn-sync" class="theme-btn topbar-sync hidden" type="button" aria-label="跨设备同步">未登录</button>
-        <div class="topbar-right">
-          <button id="btn-theme" class="theme-btn" type="button" aria-label="切换主题">跟随系统</button>
-          <button id="btn-lock" class="theme-btn" type="button" aria-label="锁定并退出" title="清除解锁状态并返回密码页">锁定</button>
+
+        <div class="topbar-center">
+          <button class="theme-btn topbar-sync hit-44" id="btn-sync" type="button" aria-label="跨设备同步">未登录</button>
         </div>
-      </div>
-      <div id="top-progress" class="top-progress hidden" aria-hidden="true">
-        <span id="top-progress-fill"></span>
+
+        <div class="topbar-right">
+          <button class="coin-chip hit-44" id="btn-coins" type="button" aria-label="金币商城">
+            <i class="coin-dot"></i><strong id="top-coins">0</strong>
+          </button>
+          <button class="theme-btn color-btn hit-44" id="btn-color" type="button"><i class="theme-dot"></i><span id="color-label">灰绿</span></button>
+        </div>
       </div>
     </header>
 
-    <main class="main hidden" id="main">
+    <main class="main" id="main">
+      <!-- ================= 首页 ================= -->
       <section class="view" id="view-home">
+        <div class="festival-banner hidden" id="festival-banner" role="status">
+          <span class="fb-icon">🎉</span>
+          <div class="fb-body">
+            <strong id="fb-title">节日特惠</strong>
+            <span id="fb-desc">商城全场 5 折</span>
+          </div>
+          <button class="fb-close hit-44" id="fb-close" type="button" aria-label="关闭">×</button>
+        </div>
+
         <section class="hero">
           <p class="hero-eyebrow">2026 · 二级建造师</p>
-          <h1 id="hero-title">每天练几题，稳步上岸</h1>
-          <p class="hero-desc" id="hero-desc">按科目与章节挑题，作答后立即查看解析。</p>
+          <h1>每天练几题，稳步上岸</h1>
+          <p class="hero-desc">按科目与章节挑题，作答后立即查看解析。</p>
           <div class="hero-stats">
-            <div><strong id="home-total">--</strong><span>总题数</span></div>
-            <div><strong id="home-done">--</strong><span>已做题</span></div>
-            <div><strong id="home-wrong">--</strong><span>错题</span></div>
-            <div><strong id="home-accuracy">--</strong><span>正确率</span></div>
+            <div><strong id="stat-total">602</strong><span>总题数</span></div>
+            <div><strong id="stat-answered">0</strong><span>已做题</span></div>
+            <div><strong id="stat-wrong">0</strong><span>当前错题</span></div>
+            <div><strong id="stat-acc">0%</strong><span>正确率</span></div>
           </div>
-          <button id="btn-stats" class="hero-btn" type="button">查看学习统计</button>
+          <button class="hero-btn" id="btn-start" type="button">开始顺序练习</button>
+          <div class="hero-quick">
+            <button class="hero-ghost" id="btn-quick10" type="button">今日 10 分钟</button>
+            <label class="goal-inline">每日目标
+              <select id="daily-goal" aria-label="每日目标题数">
+                <option value="10">10 题</option>
+                <option value="20" selected>20 题</option>
+                <option value="30">30 题</option>
+              </select>
+            </label>
+          </div>
         </section>
 
-        <div id="load-error" class="notice hidden"></div>
+        <section class="card resume-card hidden" id="resume-card" aria-live="polite">
+          <div class="resume-body">
+            <strong id="resume-title">继续上次练习</strong>
+            <span id="resume-desc"></span>
+          </div>
+          <div class="resume-actions">
+            <button class="btn primary" id="resume-continue" type="button">继续</button>
+            <button class="btn ghost" id="resume-restart" type="button">重新开始</button>
+          </div>
+        </section>
 
-        <section class="card exam-draft-card hidden" id="exam-draft-card">
-          <div class="exam-draft-body">
-            <span class="exam-draft-label">未完成的模拟考试</span>
-            <strong id="exam-draft-meta">--</strong>
+        <section class="card streak-card" id="streak-card">
+          <div class="streak-head">
+            <strong id="streak-title">连续学习 0 天</strong>
+            <span class="muted" id="streak-sub">近 7 天做题</span>
           </div>
-          <div class="exam-draft-actions">
-            <button class="btn primary" type="button" id="btn-resume-exam">继续考试</button>
-            <button class="btn ghost" type="button" id="btn-drop-draft">放弃</button>
-          </div>
+          <div class="streak-days" id="streak-days"></div>
         </section>
 
         <section class="card filter-card">
           <div class="card-head">
             <h2>选择范围</h2>
-            <span class="muted" id="filter-count"></span>
+            <span class="muted" id="filter-count">当前范围 602 题</span>
           </div>
           <div class="filter-grid">
             <label class="field">
               <span>科目</span>
-              <select id="filter-subject"></select>
+              <select id="filter-subject"><option value="">全部科目</option></select>
             </label>
             <label class="field">
-              <span>章节</span>
-              <select id="filter-chapter"></select>
+              <span>章节 / 题型</span>
+              <select id="filter-chapter">
+                <option value="">全部题型</option>
+                <option value="单选题">单选题</option>
+                <option value="多选题">多选题</option>
+                <option value="判断题">判断题</option>
+              </select>
             </label>
           </div>
         </section>
@@ -102,82 +135,92 @@
           <span class="muted">即时判题</span>
         </div>
         <div class="mode-list">
-          <button class="mode-row" type="button" data-mode="sequence">
+          <button class="mode-row" type="button" data-mode="order">
             <span class="mode-icon">顺</span>
-            <span class="mode-body">
-              <strong>顺序练习</strong>
-              <small>按题库顺序逐题作答</small>
-            </span>
-            <span class="mode-count" id="count-sequence">0 题</span>
+            <span class="mode-body"><strong>顺序练习</strong><small>按题库顺序逐题作答</small></span>
+            <span class="mode-count" id="count-order">602 题</span>
             <span class="chev">›</span>
           </button>
           <button class="mode-row" type="button" data-mode="random">
             <span class="mode-icon">随</span>
-            <span class="mode-body">
-              <strong>随机练习</strong>
-              <small>打乱顺序，避免机械记忆</small>
-            </span>
-            <span class="mode-count" id="count-random">0 题</span>
+            <span class="mode-body"><strong>随机练习</strong><small>打乱顺序，避免机械记忆</small></span>
+            <span class="mode-count" id="count-random">602 题</span>
             <span class="chev">›</span>
           </button>
           <button class="mode-row" type="button" data-mode="wrong">
             <span class="mode-icon">错</span>
-            <span class="mode-body">
-              <strong>错题重做</strong>
-              <small>答对后自动移出错题本</small>
-            </span>
+            <span class="mode-body"><strong>错题重做</strong><small>只练最近答错的题 · 累计消灭 <span id="blind-sub-count">0</span> 道</small></span>
             <span class="mode-count" id="count-wrong">0 题</span>
+            <span class="chev">›</span>
+          </button>
+          <button class="mode-row" type="button" data-mode="weak">
+            <span class="mode-icon">难</span>
+            <span class="mode-body"><strong>易错题练习</strong><small>同一题累计答错 3 次自动加入 · 可单独移除</small></span>
+            <span class="mode-count" id="count-weak">0 题</span>
             <span class="chev">›</span>
           </button>
           <button class="mode-row" type="button" data-mode="fav">
             <span class="mode-icon">藏</span>
-            <span class="mode-body">
-              <strong>收藏夹练习</strong>
-              <small>集中攻克收藏的题目</small>
-            </span>
+            <span class="mode-body"><strong>收藏练习</strong><small>集中回看收藏的题目</small></span>
             <span class="mode-count" id="count-fav">0 题</span>
             <span class="chev">›</span>
           </button>
         </div>
 
+        <button class="blind-link hidden" id="blind-open" type="button">查看待消灭清单 <b id="blind-open-count">0</b> 道 ›</button>
+        <button class="blind-link hidden" id="weak-open" type="button">管理易错题清单 <b id="weak-open-count">0</b> 道 ›</button>
+
         <section class="card exam-card">
           <div class="exam-head">
             <div>
               <h2>模拟考试</h2>
-              <p>随机抽题 · 限时作答 · 交卷算分</p>
+              <p>随机抽题 · 百分制 · 90 分起奖励</p>
             </div>
             <span class="exam-badge">100 分制</span>
           </div>
           <div class="exam-config">
             <label class="field inline">
               <span>题量</span>
-              <select id="exam-size"></select>
+              <select id="exam-size">
+                <option value="10">10 题</option>
+                <option value="20" selected>20 题</option>
+                <option value="30">30 题</option>
+                <option value="50">50 题</option>
+                <option value="100">100 题</option>
+              </select>
             </label>
-            <span class="muted" id="exam-time-hint"></span>
+            <span class="muted" id="exam-time-hint">按答对题数折算百分制</span>
           </div>
-          <button id="btn-start-exam" class="btn primary block" type="button">开始考试</button>
+          <button class="btn primary block" id="btn-start-exam" type="button">开始考试</button>
         </section>
 
-        <div class="section-head">
-          <h2>最近考试</h2>
-          <button id="btn-stats-2" class="link-btn" type="button">全部记录</button>
-        </div>
-        <div id="recent-exams" class="stack"></div>
+        <p class="proto-foot">原型数据仅存本机 localStorage（bqproto:v1），不会同步线上。</p>
       </section>
 
+      <!-- ================= 答题页 ================= -->
       <section class="view hidden" id="view-quiz">
         <div class="quiz-head">
           <span class="pill accent" id="quiz-mode">顺序练习</span>
-          <span class="quiz-count" id="quiz-count">1 / 10</span>
-          <span class="timer hidden" id="quiz-timer">15:00</span>
-          <button class="mini-btn ghost hidden" id="btn-abandon-exam" type="button">放弃</button>
-          <button class="mini-btn hidden" id="btn-handin" type="button">交卷</button>
+          <span class="quiz-count" id="quiz-count">1 / 602</span>
+          <span class="quiz-title user-title hidden" id="quiz-title"></span>
+          <span class="quiz-badges hidden" id="quiz-badges"></span>
+          <span class="quiz-streak hidden" id="quiz-streak">连对 0</span>
+          <button class="quiz-focus" id="btn-focus" type="button" aria-pressed="false" aria-label="专注模式">专注</button>
+        </div>
+
+        <div class="blind-bar hidden" id="blind-bar">
+          <div class="blind-bar-row">
+            <span>错题清盲点</span>
+            <span class="blind-bar-count">累计消灭 <b id="blind-cleared">0</b> 道</span>
+          </div>
+          <div class="blind-track"><span class="blind-fill" id="blind-fill"></span></div>
+          <div class="blind-strike" id="blind-strike" aria-hidden="true"></div>
         </div>
 
         <article class="card question-card">
           <div class="q-meta">
             <span class="pill" id="q-type">单选题</span>
-            <span class="q-chapter" id="q-chapter"></span>
+            <span class="q-chapter" id="q-chapter">单选题</span>
           </div>
           <h1 class="q-stem" id="q-stem"></h1>
           <div class="options" id="q-options"></div>
@@ -185,70 +228,103 @@
         </article>
       </section>
 
-      <section class="view hidden" id="view-stats">
-        <h1 class="page-title">学习统计</h1>
-        <p class="stats-scope" id="stats-scope">统计范围：全部题目（首页数字随科目/章节筛选变化）</p>
-        <div class="stat-grid">
-          <div class="card stat-card">
-            <span>总正确率</span>
-            <strong id="stat-accuracy">--</strong>
-            <small id="stat-attempts">共 0 次作答</small>
+      <!-- ================= 金币商城 ================= -->
+      <section class="view hidden" id="view-shop">
+        <div class="shop-head">
+          <div>
+            <h1 class="page-title">金币商城</h1>
+            <p class="muted" id="shop-sub">答对 +10 · 每日首刷 +50 · 连对 3 题 +30 / 10 题 +100</p>
           </div>
-          <div class="card stat-card">
-            <span>已做题目</span>
-            <strong id="stat-done">--</strong>
-            <small id="stat-total">共 0 题</small>
-          </div>
-          <div class="card stat-card">
-            <span>错题本</span>
-            <strong id="stat-wrong">--</strong>
-            <small>答对后自动移除</small>
-          </div>
-          <div class="card stat-card">
-            <span>收藏</span>
-            <strong id="stat-fav">--</strong>
-            <small>随时回看</small>
-          </div>
+          <div class="coin-pill"><span class="coin-dot"></span><strong id="shop-coins">0</strong><small>金币</small></div>
         </div>
 
-        <div class="section-head">
-          <h2>章节掌握情况</h2>
-          <span class="muted">按作答次数统计</span>
+        <div class="festival-note hidden" id="festival-note">
+          <span class="fest-badge inline">节日特惠</span>
+          <span id="festival-note-text">全场 5 折</span>
         </div>
-        <div class="card chapter-list" id="chapter-stats"></div>
 
-        <div class="section-head">
-          <h2>考试历史</h2>
-          <span class="muted">最多保留 20 次</span>
+        <div class="shop-tabs" id="shop-tabs">
+          <button class="shop-tab active" type="button" data-tab="all">全部</button>
+          <button class="shop-tab" type="button" data-tab="title">称号</button>
+          <button class="shop-tab" type="button" data-tab="bg">背景</button>
+          <button class="shop-tab" type="button" data-tab="cat">猫猫</button>
+          <button class="shop-tab" type="button" data-tab="fx">特效</button>
         </div>
-        <div class="card history-list" id="exam-history"></div>
 
-        <button class="danger-link" id="btn-reset" type="button">清除全部本地数据</button>
+        <div class="frag-bar" id="frag-bar">
+          <span class="frag-icon">✦</span>
+          <span class="frag-text">限定碎片 <b id="frag-count">0</b> / 40<span id="frag-left"></span></span>
+          <button class="frag-go" id="frag-go" type="button">去兑换</button>
+        </div>
+
+        <div id="shop-body"></div>
+
+        <p class="shop-cat-note">价格：称号 500 / 1200 / 5000–20000 · 背景 80 / 900 · 猫猫换装 100–1500 · 特效 100。节日当天全场 5 折。</p>
       </section>
 
+      <!-- ================= 结果页 ================= -->
       <section class="view hidden" id="view-result">
         <div class="card result-card">
-          <p class="muted">模拟考试结果</p>
-          <div class="score-ring">
-            <span id="result-score">--</span>
+          <p class="muted" id="result-eyebrow">本次练习结果</p>
+          <div class="score-ring" id="score-ring" style="--score: 0">
+            <span id="result-score">0</span>
             <small>分</small>
           </div>
-          <h2 id="result-title"></h2>
+          <div class="exam-reward hidden" id="result-exam-reward">
+            <span class="exam-reward-tag" id="result-exam-tier">未达奖励线</span>
+            <strong id="result-exam-coins">0</strong>
+            <p id="result-exam-text">这次没到奖励线，再来一次</p>
+          </div>
+          <h2 id="result-title">继续保持</h2>
           <div class="result-stats">
             <div><strong id="result-correct">0</strong><span>答对</span></div>
             <div><strong id="result-wrong">0</strong><span>答错</span></div>
             <div><strong id="result-unanswered">0</strong><span>未答</span></div>
             <div><strong id="result-time">0:00</strong><span>用时</span></div>
           </div>
+          <p class="result-egg hidden" id="result-egg"></p>
           <div class="result-actions">
-            <button class="btn primary" id="btn-retry-exam" type="button">再考一组</button>
-            <button class="btn ghost" id="btn-result-home" type="button">返回首页</button>
+            <button class="btn primary" id="btn-again" type="button">再来一组</button>
+            <button class="btn ghost hidden" id="btn-redo-wrong" type="button">重做本次错题</button>
+            <button class="btn ghost" id="btn-home" type="button">返回首页</button>
           </div>
         </div>
 
+        <section class="card exam-report hidden" id="exam-report">
+          <div class="report-top">
+            <span class="report-brand">模拟考试 · 成绩单</span>
+            <button class="report-close hit-44" id="report-close" type="button" aria-label="关闭成绩单">×</button>
+          </div>
+          <div class="report-hero">
+            <span class="report-score" id="report-score">0</span>
+            <span class="report-unit">分</span>
+          </div>
+          <span class="report-grade" id="report-grade">稳健通关</span>
+          <div class="report-grid">
+            <div><span>用时</span><strong id="report-time">0:00</strong></div>
+            <div><span>答对</span><strong id="report-correct">0 / 0</strong></div>
+            <div><span>装备称号</span><strong id="report-title">未佩戴称号</strong></div>
+            <div><span>考试日期</span><strong id="report-date">--</strong></div>
+          </div>
+          <p class="report-foot" id="report-foot"></p>
+          <div class="report-actions">
+            <button class="btn primary" id="report-save" type="button">保存图片</button>
+            <button class="btn ghost hidden" id="report-share" type="button">分享</button>
+            <button class="btn ghost" id="report-close-2" type="button">关闭</button>
+          </div>
+        </section>
+
+        <section class="card reward-card" id="result-reward">
+          <div class="reward-card-head">
+            <span class="reward-card-tag" id="result-reward-tag">高分鼓励</span>
+            <button class="reward-close" type="button" aria-label="关闭">×</button>
+          </div>
+          <p id="result-reward-text"></p>
+        </section>
+
         <div class="section-head">
           <h2>逐题回顾</h2>
-          <span class="muted">含答案解析</span>
+          <span class="muted" id="review-count">含答案解析</span>
         </div>
         <div class="stack" id="review-list"></div>
       </section>
@@ -256,48 +332,201 @@
 
     <div class="quiz-bar hidden" id="quiz-bar">
       <button class="bar-btn" id="btn-prev" type="button">上一题</button>
-      <button class="bar-btn" id="btn-fav" type="button">☆ 收藏</button>
+      <button class="bar-btn fav" id="btn-fav" type="button">☆ 收藏</button>
       <button class="bar-btn primary" id="btn-main" type="button">下一题</button>
     </div>
 
-    <div class="modal hidden" id="sync-modal" role="dialog" aria-modal="true" aria-labelledby="sync-modal-title">
-      <div class="modal-mask" id="sync-mask"></div>
-      <div class="modal-panel" role="document">
-        <div class="modal-head">
-          <h2 id="sync-modal-title">跨设备同步</h2>
-          <div class="modal-head-right">
-            <span class="sync-status" id="sync-status">未登录</span>
-            <button class="modal-close" id="btn-sync-close" type="button" aria-label="关闭">×</button>
-          </div>
+    <!-- ============ 猫猫：60×60 悬浮圆球 ============ -->
+    <aside class="pet-card" id="pet-card" data-sleep="0" aria-label="猫猫">
+      <button class="pet-ball" id="pet-ball" type="button" aria-label="猫猫">
+        <span class="pet-avatar" id="pet-avatar" data-skin="classic">
+          <img class="pet-sprite" id="pet-sprite" src="assets/cat/frames60/stand_60.webp" alt="" draggable="false" decoding="async">
+          <span class="cat-accessories" id="cat-accessories" aria-hidden="true">
+            <svg class="acc acc-bunny" viewBox="0 0 60 26">
+              <path d="M20 24C13 12 14 2 20 1c6-1 9 8 8 23z" fill="#f9c9da" stroke="#eeb0c8" stroke-width="1.2"/>
+              <path d="M40 24C47 12 46 2 40 1c-6-1-9 8-8 23z" fill="#f9c9da" stroke="#eeb0c8" stroke-width="1.2"/>
+              <path d="M21 21c-4-8-3-14 0-15 3 0 4 6 3 15z" fill="#ffe7ef"/>
+              <path d="M39 21c4-8 3-14 0-15-3 0-4 6-3 15z" fill="#ffe7ef"/>
+            </svg>
+            <svg class="acc acc-glasses" viewBox="0 0 40 16">
+              <rect x="2" y="3" width="15" height="11" rx="4.5" fill="none" stroke="#26221e" stroke-width="2.2"/>
+              <rect x="23" y="3" width="15" height="11" rx="4.5" fill="none" stroke="#26221e" stroke-width="2.2"/>
+              <path d="M17 8h6" fill="none" stroke="#26221e" stroke-width="2" stroke-linecap="round"/>
+              <path d="M2 8 0 6M38 8l2-2" fill="none" stroke="#26221e" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <svg class="acc acc-coffee" viewBox="0 0 20 24">
+              <path d="M3 8h14l-2 14H5z" fill="#f3eee7" stroke="#b8ab99" stroke-width="1.2"/>
+              <path d="M4.5 11h11l-1.5 9H6z" fill="#6f4a2f"/>
+              <path d="M11 9 14 0" stroke="#d98da4" stroke-width="2.4" stroke-linecap="round"/>
+              <path d="M17 11c4 0 4 6 0 6" fill="none" stroke="#b8ab99" stroke-width="1.3"/>
+            </svg>
+          </span>
+        </span>
+      </button>
+      <span class="pet-em" id="pet-em">😄</span>
+      <span class="pet-zzz" id="pet-zzz">z z z</span>
+      <span class="pet-plus" id="pet-plus"></span>
+      <div class="pet-hearts" id="pet-hearts"><i>♥</i><i>♥</i><i>♥</i></div>
+      <span class="pet-say hidden" id="pet-say"></span>
+      <div class="pet-fx" id="pet-fx" aria-hidden="true"></div>
+      <div class="egg-fly" id="egg-fly" aria-hidden="true"></div>
+
+      <div class="pet-menu hidden" id="pet-menu">
+        <div class="pet-menu-head">
+          <strong class="pet-name" id="pet-name">小鹿</strong>
+          <button class="pet-rename" id="pet-rename" type="button">改名</button>
+          <span class="pet-level" id="pet-level">Lv.1</span>
         </div>
-        <form class="sync-form" id="auth-form" autocomplete="on">
-          <label class="field">
-            <span>邮箱</span>
-            <input id="auth-email" type="email" autocomplete="email" placeholder="邮箱地址" required>
-          </label>
-          <label class="field">
-            <span>密码</span>
-            <input id="auth-password" type="password" autocomplete="current-password" placeholder="密码" required>
-          </label>
-          <button class="btn primary block" type="submit" id="btn-login">登录</button>
-        </form>
-        <div class="sync-user hidden" id="sync-user">
-          <div class="sync-account">
-            <span>当前账号</span>
-            <strong id="sync-email"></strong>
-          </div>
-          <div class="sync-actions">
-            <button class="btn ghost" type="button" id="btn-sync-now">立即同步</button>
-            <button class="btn ghost" type="button" id="btn-logout">退出登录</button>
-          </div>
+        <div class="pet-rename-row hidden" id="pet-rename-row">
+          <input id="pet-name-input" maxlength="8" placeholder="猫猫名字" aria-label="猫猫名字">
+          <button class="pet-name-save" id="pet-name-save" type="button">保存</button>
         </div>
-        <p class="sync-hint">离线优先：答题先存本机，登录后自动合并。</p>
+        <div class="pet-menu-row">
+          <button class="pet-goal" id="pet-goal" type="button" aria-label="打开衣橱">
+            <span class="pet-goal-track"><span class="pet-goal-fill" id="pet-exp-fill"></span></span>
+          </button>
+          <button class="pet-feed" id="pet-feed" type="button" aria-label="喂食" title="喂食">🐟</button>
+        </div>
+        <div class="pet-goal-row">
+          <span class="pet-goal-text" id="pet-goal-text">今天还差 20 题就达标啦！</span>
+          <span class="pet-streak-badge hidden" id="pet-streak-badge">🔥<b id="pet-streak">0</b></span>
+        </div>
+      </div>
+    </aside>
+
+    <div class="drag-ghost" id="drag-ghost"><span>默认位置</span></div>
+
+    <!-- 错题消消乐 -->
+    <div class="smash-layer hidden" id="smash-layer" aria-hidden="true">
+      <div class="smash-card" id="smash-card" data-phase="before">
+        <span class="smash-label" id="smash-label">发现 1 个盲点</span>
+        <div class="smash-stage">
+          <svg class="smash-art" viewBox="0 0 140 96">
+            <g class="monster">
+              <rect x="40" y="24" width="60" height="56" rx="10" fill="#d9927d" stroke="#b9745f" stroke-width="2"/>
+              <path d="M40 44h60M70 24v20M52 44v36M88 44v36" stroke="#b9745f" stroke-width="2" fill="none"/>
+              <circle cx="58" cy="57" r="4" fill="#3b2b26"/>
+              <circle cx="82" cy="57" r="4" fill="#3b2b26"/>
+              <path d="M62 70c5-4 11-4 16 0" stroke="#3b2b26" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+              <path d="M44 26c0-12 10-18 26-18s26 6 26 18z" fill="#f2c445"/>
+              <rect x="38" y="24" width="64" height="7" rx="3.5" fill="#dca81f"/>
+              <rect x="66" y="10" width="8" height="14" rx="3.5" fill="#fff4cc"/>
+            </g>
+            <g class="shards">
+              <path d="M52 32l12 8-7 12z" fill="#d9927d"/>
+              <path d="M78 28l14 7-5 13z" fill="#c9816c"/>
+              <path d="M38 58l16 2-7 14z" fill="#e2a48f"/>
+              <path d="M88 60l12 5-3 14z" fill="#d9927d"/>
+              <path d="M58 78l12-5 3 11z" fill="#c9816c"/>
+              <path d="M46 42l9 4-3 8z" fill="#f2c445"/>
+              <circle cx="46" cy="48" r="2.4" fill="#e8c9a0"/>
+              <circle cx="98" cy="50" r="2" fill="#e8c9a0"/>
+              <circle cx="70" cy="30" r="1.8" fill="#f7e5c8"/>
+            </g>
+            <g class="smash-coins">
+              <g fill="#e9b53b" stroke="#c9952a" stroke-width="1.5">
+                <circle cx="46" cy="60" r="9"/>
+                <circle cx="70" cy="48" r="10"/>
+                <circle cx="94" cy="62" r="8"/>
+              </g>
+              <path d="M43 60h6M67 48h6M91 62h6" stroke="#fff3c4" stroke-width="2" stroke-linecap="round"/>
+              <text x="70" y="86" text-anchor="middle" id="smash-coins-text">金币 +1</text>
+            </g>
+          </svg>
+        </div>
+        <p class="smash-tip" id="smash-tip">答对就能消灭 · 点击跳过</p>
       </div>
     </div>
 
-    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <!-- 连击特效 -->
+    <div class="combo-layer hidden" id="combo-layer" aria-hidden="true"></div>
+
+    <!-- 每日达标轻提示 -->
+    <div class="reward-toast hidden" id="reward-toast" role="status">
+      <div class="reward-toast-body">
+        <span class="reward-toast-tag">今日达标</span>
+        <p id="reward-toast-text"></p>
+      </div>
+      <button class="reward-close" type="button" aria-label="关闭">×</button>
+    </div>
+
+    <div class="badge-pop hidden" id="badge-pop" role="status" aria-live="polite"></div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <!-- 待消灭清单 -->
+    <div class="sheet-layer hidden" id="blind-sheet" role="dialog" aria-modal="true" aria-labelledby="blind-sheet-title">
+      <div class="sheet-card">
+        <div class="sheet-head">
+          <strong id="blind-sheet-title">待消灭清单</strong>
+          <button class="sheet-close" id="blind-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <p class="sheet-sub" id="blind-summary"></p>
+        <div class="blind-list" id="blind-list"></div>
+        <button class="btn primary block" id="blind-start" type="button">开始清盲点</button>
+      </div>
+    </div>
+
+    <!-- 成绩单图片（iOS / 微信长按保存） -->
+    <div class="report-preview hidden" id="report-preview" role="dialog" aria-modal="true" aria-label="成绩单图片">
+      <div class="report-preview-card">
+        <img id="report-preview-img" alt="二建模拟考试成绩单">
+        <p>长按图片保存到相册</p>
+        <button class="btn primary block" id="report-preview-close" type="button">关闭</button>
+      </div>
+    </div>
+
+    <!-- 主题色选择 -->
+    <div class="color-menu hidden" id="color-menu">
+      <button type="button" data-color="green"><i class="swatch green"></i>默认绿<span class="check">✓</span></button>
+      <button type="button" data-color="morandi-green"><i class="swatch morandi-green"></i>灰绿<span class="check">✓</span></button>
+      <button type="button" data-color="morandi-purple"><i class="swatch morandi-purple"></i>淡紫<span class="check">✓</span></button>
+      <button type="button" data-color="morandi-coffee"><i class="swatch morandi-coffee"></i>奶咖<span class="check">✓</span></button>
+    </div>
+
+    <!-- 易错题清单 -->
+    <div class="modal-layer hidden" id="weak-modal" role="dialog" aria-modal="true" aria-labelledby="weak-title">
+      <div class="modal-card">
+        <button class="modal-close" id="weak-close" type="button" aria-label="关闭">×</button>
+        <h2 class="modal-title" id="weak-title">易错题清单</h2>
+        <p class="modal-sub">同一题累计答错 3 次及以上的题会自动加入，可单独移除。</p>
+        <div class="weak-list" id="weak-list"></div>
+        <button class="btn ghost block" id="weak-clear" type="button">清空易错题</button>
+      </div>
+    </div>
+
+    <!-- 跨设备同步（真实 Supabase 登录） -->
+    <div class="modal-layer hidden" id="sync-modal" role="dialog" aria-modal="true" aria-labelledby="sync-title">
+      <div class="modal-card">
+        <button class="modal-close" id="sync-close" type="button" aria-label="关闭">×</button>
+        <h2 class="modal-title" id="sync-title">跨设备同步</h2>
+        <p class="modal-sub" id="sync-sub">登录后，刷题记录与模拟考试草稿会跨设备同步。</p>
+
+        <form id="sync-form" class="sync-form">
+          <label class="sync-field"><span>邮箱</span>
+            <input id="sync-email" type="email" placeholder="邮箱" autocomplete="username">
+          </label>
+          <label class="sync-field"><span>密码</span>
+            <input id="sync-password" type="password" placeholder="密码" autocomplete="current-password">
+          </label>
+          <button class="btn primary block" id="sync-submit" type="submit">登录并同步</button>
+        </form>
+
+        <div class="sync-account hidden" id="sync-account">
+          <div class="sync-user">
+            <span class="sync-avatar">✓</span>
+            <div><small>已登录</small><strong id="sync-email-view"></strong></div>
+          </div>
+          <p class="modal-tip" id="sync-time">上次同步：刚刚</p>
+          <button class="btn primary block" id="sync-now" type="button">立即同步</button>
+          <button class="btn ghost block" id="sync-logout" type="button">退出登录</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 
-  <script src="app.js"></script>
+<script src="questions-data.min.js"></script>
+<script src="app.min.js"></script>
 </body>
 </html>
