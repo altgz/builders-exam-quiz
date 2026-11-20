@@ -1308,7 +1308,7 @@
 
   function updatePetBubble() {
     var info = levelInfo(state.xp);
-    els.petLevel.textContent = 'Lv.' + info.level + ' · ' + info.total + ' XP';
+    els.petLevel.textContent = info.total > 0 ? 'Lv.' + info.level + ' · ' + info.total + ' XP' : 'Lv.' + info.level;
     els.petExp.style.width = Math.min(100, Math.round((info.cur / info.need) * 100)) + '%';
     els.petGoalText.textContent = '距 Lv.' + (info.level + 1) + ' 还需 ' + (info.need - info.cur) + ' XP';
     els.petStreak.textContent = state.streak;
